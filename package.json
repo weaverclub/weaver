@@ -1,0 +1,5 @@
+{
+  "name": "weaver",
+  "version": "0.0.0",
+  "description": "This package.json serves to provide compatibility with @ark/attest"
+}

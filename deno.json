@@ -1,4 +1,30 @@
 {
   "name": "weaver",
-  "description": "Toolkit for the next generation of extensible applications"
+  "description": "Toolkit for the next generation of extensible applications",
+  "version": "0.0.0",
+  "tasks": {
+    "test": "deno test --preload setupTests.ts --parallel --allow-all --coverage"
+  },
+  "exports": "./mod.ts",
+  "imports": {
+    "@ark/attest": "npm:@ark/attest@0.56.0",
+    "@standard-schema/spec": "jsr:@standard-schema/spec@1.1.0",
+    "@std/assert": "jsr:@std/assert@1.0.19",
+    "@std/semver": "jsr:@std/semver@1.0.8",
+    "effect": "npm:effect@3.21.2",
+    "typescript": "npm:typescript@6.0.3"
+  },
+  "fmt": {
+    "singleQuote": true,
+    "semiColons": false,
+    "trailingCommas": "never"
+  },
+  "lint": {
+    "rules": {
+      "exclude": [
+        "no-explicit-any"
+      ]
+    }
+  },
+  "nodeModulesDir": "auto"
 }
