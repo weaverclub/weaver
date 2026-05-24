@@ -4,21 +4,25 @@ import { PluginManifest } from './plugin.ts'
 import { RuntimePermissionSchema } from './runtimePermission.ts'
 
 const CONSTANTS = {
-  'InstalledPlugins': '__weaver_installed_plugins__'
+  'InstalledPlugins': '__weaver_installed_plugins__',
+  'OnInstall': '__weaver_lifecycle_on_install__',
+  'OnStart': '__weaver_lifecycle_on_start__'
 }
 
-const parseInstalledPluginsArray = Schema.decodeUnknown(
-  Schema.Array(PluginManifest.pipe(
-    Schema.extend(Schema.Struct({
-      givenRuntimePermissions: Schema.Array(RuntimePermissionSchema),
-      givenPermissions: Schema.Array(Schema.String)
-    }))
-  ))
+const installedPlugin = PluginManifest.pipe(
+  Schema.extend(Schema.Struct({
+    givenRuntimePermissions: Schema.Array(RuntimePermissionSchema),
+    givenPermissions: Schema.Array(Schema.String)
+  }))
 )
 
-export class PluginRegistryError
-  extends Data.TaggedError('PluginRegistryError')<{
-    cause: unknown
+const parseInstalledPluginsArray = Schema.decodeUnknown(
+  Schema.Array(installedPlugin)
+)
+
+export class PluginAlreadyInstalledError
+  extends Data.TaggedError('PluginAlreadyInstalledError')<{
+    pluginId: string
   }> {}
 
 export class PluginRegistry extends Effect.Service<PluginRegistry>()(
@@ -37,9 +41,39 @@ export class PluginRegistry extends Effect.Service<PluginRegistry>()(
         })
       }
 
+      function installPlugin(plugin: InstallPlugin) {
+        return Effect.gen(function* () {
+          const installedPlugins = yield* getInstalledPlugins()
+
+          const pluginIndex = installedPlugins.find((p) => p.id === plugin.id)
+
+          if (pluginIndex !== undefined) {
+            return yield* new PluginAlreadyInstalledError({
+              pluginId: plugin.id
+            })
+          }
+
+          const rawNewInstalledPlugins = [...installedPlugins, plugin]
+
+          const parsedNewInstalledPlugins = yield* parseInstalledPluginsArray(
+            rawNewInstalledPlugins
+          )
+
+          yield* storage.set(
+            CONSTANTS.InstalledPlugins,
+            parsedNewInstalledPlugins
+          )
+        })
+      }
+
       return {
-        getInstalledPlugins
+        getInstalledPlugins,
+        installPlugin
       } as const
     })
   }
-) {}
+) {
+  static CONSTANTS = CONSTANTS
+}
+
+export type InstallPlugin = typeof installedPlugin.Type

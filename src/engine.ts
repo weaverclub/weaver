@@ -1,10 +1,15 @@
 import { Effect, Layer, PubSub } from 'effect'
-import { Supervisor } from './supervisor.ts'
-import { PluginRegistry } from './pluginRegistry.ts'
-import type { WorkerMessage } from './protocol.ts'
+import {
+  Supervisor,
+  type WorkerId,
+  type WorkerLifecycleEvent
+} from './supervisor.ts'
+import { type InstallPlugin, PluginRegistry } from './pluginRegistry.ts'
+import { Message, type WorkerMessage } from './protocol.ts'
 import type { RuntimePermission } from './runtimePermission.ts'
 import { ItemNotFoundError, Storage, StorageError } from './storage.ts'
 import type { Host } from './host.ts'
+import type { PluginManifest } from './plugin.ts'
 
 export function ephemeralStorage(): AsyncStorageImpl {
   const store = new Map<string, unknown>()
@@ -47,8 +52,16 @@ export function engine<H extends Host<any>>(options: EngineOptions<H>) {
     Effect.orDie
   )
 
+  const install = (plugin: InstallPlugin) =>
+    Engine.pipe(
+      Effect.flatMap((engine) => engine.install(plugin)),
+      Effect.provide(layers),
+      Effect.orDie
+    )
+
   return {
-    start: () => Effect.runPromise(start)
+    start: () => Effect.runPromise(start),
+    install: (plugin: InstallPlugin) => Effect.runPromise(install(plugin))
   } as const
 }
 
@@ -58,11 +71,45 @@ export class Engine extends Effect.Service<Engine>()(
     scoped: Effect.gen(function* () {
       const pluginRegistry = yield* PluginRegistry
       const supervisor = yield* Supervisor
-      const ps = yield* PubSub.unbounded<WorkerMessage>()
+      const workerMessages = yield* PubSub.unbounded<WorkerMessage>()
+      const workerLifecycleEvents = yield* PubSub.unbounded<
+        WorkerLifecycleEvent
+      >()
 
-      const consumer = yield* PubSub.subscribe(ps)
+      const consumerOfWorkerMessages = PubSub.subscribe(workerMessages)
+      const consumerOfWorkerLifecycleEvents = PubSub.subscribe(
+        workerLifecycleEvents
+      )
 
       const plugins = yield* pluginRegistry.getInstalledPlugins()
+
+      function dispatchOnInstall(
+        workerId: WorkerId,
+        pluginManifest: PluginManifest
+      ) {
+        return supervisor.notify(
+          workerId,
+          Message.make({
+            id: crypto.randomUUID(),
+            event: PluginRegistry.CONSTANTS.OnInstall,
+            payload: pluginManifest
+          })
+        )
+      }
+
+      function dispatchOnStart(
+        workerId: WorkerId,
+        pluginManifest: PluginManifest
+      ) {
+        return supervisor.notify(
+          workerId,
+          Message.make({
+            id: crypto.randomUUID(),
+            event: PluginRegistry.CONSTANTS.OnStart,
+            payload: pluginManifest
+          })
+        )
+      }
 
       function start() {
         return Effect.forEach(
@@ -72,18 +119,41 @@ export class Engine extends Effect.Service<Engine>()(
               pluginManifest: plugin,
               givenRuntimePermissions: plugin
                 .givenRuntimePermissions as RuntimePermission[],
-              ps
-            }),
+              workerMessages,
+              workerLifecycleEvents
+            }).pipe(
+              Effect.flatMap(
+                (process) => dispatchOnStart(process.id, plugin)
+              )
+            ),
           {
             concurrency: 'unbounded'
           }
         )
       }
 
+      function install(plugin: InstallPlugin) {
+        return Effect.gen(function* () {
+          yield* pluginRegistry.installPlugin(plugin)
+
+          const process = yield* supervisor.start({
+            pluginManifest: plugin,
+            givenRuntimePermissions: plugin
+              .givenRuntimePermissions as RuntimePermission[],
+            workerLifecycleEvents,
+            workerMessages
+          })
+          yield* dispatchOnInstall(process.id, plugin)
+
+          yield* supervisor.interrupt(process.id)
+        })
+      }
+
       return {
         start,
         supervisor,
-        pluginRegistry
+        pluginRegistry,
+        install
       } as const
     })
   }

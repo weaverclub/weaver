@@ -2,9 +2,7 @@ import { Schema } from 'effect'
 import { WorkerId } from './supervisor.ts'
 
 export const Message = Schema.Struct({
-  id: Schema.UUID.pipe(
-    Schema.brand('MessageID')
-  ),
+  id: Schema.UUID,
   event: Schema.String,
   payload: Schema.Unknown
 })

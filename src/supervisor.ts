@@ -19,7 +19,7 @@ import {
   type RuntimePermission,
   toDenoPermission
 } from './runtimePermission.ts'
-import { parseMessage, WorkerMessage } from './protocol.ts'
+import { type Message, parseMessage, WorkerMessage } from './protocol.ts'
 
 export const WorkerId = Schema.UUID.pipe(Schema.brand('WorkerId'))
 
@@ -33,6 +33,11 @@ export class WorkerDeserializationError
     workerId: WorkerId
     event: MessageEvent
   }> {}
+
+export class NotifyWorkerError extends Data.TaggedError('NotifyWorkerError')<{
+  workerId: WorkerId
+  cause: unknown
+}> {}
 
 function acquireWorker(
   { pluginManifest, givenRuntimePermissions }: AcquireWorkerOptions
@@ -162,7 +167,8 @@ function superviseWorker(
     pluginManifest,
     scope,
     handlesRef,
-    ps
+    workerMessages,
+    workerLifecycleEvents
   }: SuperviseWorkerOptions
 ) {
   return Effect.gen(function* () {
@@ -205,6 +211,14 @@ function superviseWorker(
 
     yield* Ref.update(handlesRef, HashMap.set(workerHandle.id, workerHandle))
     yield* Ref.set(workerHandle.status, { _tag: 'Running' })
+    yield* PubSub.publish(
+      workerLifecycleEvents,
+      {
+        _tag: 'WorkerStarted',
+        pluginManifest,
+        workerId: id
+      }
+    )
 
     yield* Effect.logDebug('Worker registered as Running', {
       workerId: id
@@ -218,7 +232,7 @@ function superviseWorker(
         })
       ),
       Effect.flatMap(
-        (msg) => PubSub.publish(ps, msg)
+        (msg) => PubSub.publish(workerMessages, msg)
       ),
       Effect.forever,
       Effect.forkScoped
@@ -254,13 +268,38 @@ function superviseWorker(
 
           if (Exit.isSuccess(exit)) {
             yield* Ref.set(status, { _tag: 'Terminated' })
+            yield* PubSub.publish(
+              workerLifecycleEvents,
+              {
+                _tag: 'WorkerTerminated',
+                pluginManifest,
+                workerId: id
+              }
+            )
           } else if (Exit.isInterrupted(exit)) {
             yield* Ref.set(status, { _tag: 'Interrupted' })
+            yield* PubSub.publish(
+              workerLifecycleEvents,
+              {
+                _tag: 'WorkerInterrupted',
+                pluginManifest,
+                workerId: id
+              }
+            )
           } else {
             yield* Ref.set(status, {
               _tag: 'Crashed',
               error: Cause.squash(exit.cause)
             })
+            yield* PubSub.publish(
+              workerLifecycleEvents,
+              {
+                _tag: 'WorkerCrashed',
+                pluginManifest,
+                workerId: id,
+                error: Cause.squash(exit.cause)
+              }
+            )
           }
 
           yield* Scope.close(scope, Exit.void)
@@ -349,10 +388,36 @@ export class Supervisor extends Effect.Service<Supervisor>()(
         )
       }
 
+      function notify(id: WorkerId, message: Message) {
+        return Effect.gen(function* () {
+          const handle = yield* get(id)
+
+          if (Option.isSome(handle)) {
+            yield* Effect.logDebug('Sending message to worker', {
+              workerId: id,
+              event: message.event
+            })
+            yield* Effect.try({
+              try: () => handle.value.worker.postMessage(message),
+              catch: (cause) =>
+                new NotifyWorkerError({
+                  workerId: id,
+                  cause
+                })
+            })
+          } else {
+            yield* Effect.logDebug('Worker not found for sending message', {
+              workerId: id
+            })
+          }
+        })
+      }
+
       return {
         start,
         interrupt,
-        get
+        get,
+        notify
       } as const
     })
   }
@@ -364,15 +429,17 @@ type AcquireWorkerOptions = {
 }
 
 type StartWorkerOptions = AcquireWorkerOptions & {
-  ps: PubSub.PubSub<WorkerMessage>
+  workerMessages: PubSub.PubSub<WorkerMessage>
+  workerLifecycleEvents: PubSub.PubSub<WorkerLifecycleEvent>
 }
 
 type SuperviseWorkerOptions = Omit<WorkerHandle, 'worker'> & {
-  ps: PubSub.PubSub<WorkerMessage>
+  workerMessages: PubSub.PubSub<WorkerMessage>
+  workerLifecycleEvents: PubSub.PubSub<WorkerLifecycleEvent>
   handlesRef: Ref.Ref<HashMap.HashMap<WorkerId, WorkerHandle>>
 }
 
-type WorkerId = typeof WorkerId.Type
+export type WorkerId = typeof WorkerId.Type
 
 type WorkerStatus = {
   _tag: 'Running'
@@ -392,4 +459,23 @@ type WorkerHandle = {
   givenRuntimePermissions: RuntimePermission[]
   scope: Scope.CloseableScope
   status: Ref.Ref<WorkerStatus>
+}
+
+export type WorkerLifecycleEvent = {
+  _tag: 'WorkerStarted'
+  pluginManifest: PluginManifest
+  workerId: WorkerId
+} | {
+  _tag: 'WorkerTerminated'
+  pluginManifest: PluginManifest
+  workerId: WorkerId
+} | {
+  _tag: 'WorkerInterrupted'
+  pluginManifest: PluginManifest
+  workerId: WorkerId
+} | {
+  _tag: 'WorkerCrashed'
+  pluginManifest: PluginManifest
+  workerId: WorkerId
+  error: unknown
 }
