@@ -1,13 +1,19 @@
 import { Data, Effect, Schema } from 'effect'
 import { Storage } from './storage.ts'
 import { PluginManifest } from './plugin.ts'
+import { RuntimePermissionSchema } from './runtimePermission.ts'
 
 const CONSTANTS = {
   'InstalledPlugins': '__weaver_installed_plugins__'
 }
 
-const parsePluginManifestArray = Schema.decodeUnknown(
-  Schema.Array(PluginManifest)
+const parseInstalledPluginsArray = Schema.decodeUnknown(
+  Schema.Array(PluginManifest.pipe(
+    Schema.extend(Schema.Struct({
+      givenRuntimePermissions: Schema.Array(RuntimePermissionSchema),
+      givenPermissions: Schema.Array(Schema.String)
+    }))
+  ))
 )
 
 export class PluginRegistryError
@@ -27,7 +33,7 @@ export class PluginRegistry extends Effect.Service<PluginRegistry>()(
             CONSTANTS.InstalledPlugins
           )
 
-          return yield* parsePluginManifestArray(rawInstalledPlugins)
+          return yield* parseInstalledPluginsArray(rawInstalledPlugins)
         })
       }
 

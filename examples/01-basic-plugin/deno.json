@@ -1,0 +1,11 @@
+{
+  "imports": {
+    "weaver": "../../mod.ts",
+    "zod": "npm:zod@^4.4.3"
+  },
+  "fmt": {
+    "singleQuote": true,
+    "semiColons": false,
+    "trailingCommas": "never"
+  }
+}

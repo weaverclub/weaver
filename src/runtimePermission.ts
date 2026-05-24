@@ -1,3 +1,77 @@
+import { Schema } from 'effect'
+
+export const RuntimePermissionSchema = Schema.Union(
+  Schema.Struct({
+    type: Schema.Literal('net'),
+    urls: Schema.optional(Schema.Array(Schema.String))
+  }),
+  Schema.Struct({
+    type: Schema.Literal('read'),
+    paths: Schema.optional(Schema.Array(Schema.String))
+  }),
+  Schema.Struct({
+    type: Schema.Literal('write'),
+    paths: Schema.optional(Schema.Array(Schema.String))
+  }),
+  Schema.Struct({
+    type: Schema.Literal('env'),
+    variables: Schema.optional(Schema.Array(Schema.String))
+  }),
+  Schema.Struct({
+    type: Schema.Literal('sys'),
+    apis: Schema.optional(Schema.Array(Schema.String))
+  }),
+  Schema.Struct({
+    type: Schema.Literal('run'),
+    programs: Schema.optional(Schema.Array(Schema.String))
+  }),
+  Schema.Struct({
+    type: Schema.Literal('ffi'),
+    paths: Schema.optional(Schema.Array(Schema.String))
+  }),
+  Schema.Struct({
+    type: Schema.Literal('import'),
+    hosts: Schema.optional(Schema.Array(Schema.String))
+  })
+)
+
+export function toDenoPermission(
+  permissions: RuntimePermission[]
+): Deno.PermissionOptionsObject {
+  const result: Record<string, string[] | undefined> = {}
+
+  for (const permission of permissions) {
+    switch (permission.type) {
+      case 'net':
+        result.net = permission.urls
+        break
+      case 'read':
+        result.read = permission.paths
+        break
+      case 'write':
+        result.write = permission.paths
+        break
+      case 'env':
+        result.env = permission.variables
+        break
+      case 'sys':
+        result.sys = permission.apis
+        break
+      case 'run':
+        result.run = permission.programs
+        break
+      case 'ffi':
+        result.ffi = permission.paths
+        break
+      case 'import':
+        result.import = permission.hosts
+        break
+    }
+  }
+
+  return result as Deno.PermissionOptionsObject
+}
+
 /**
  * Shorthand helper for creating a network permission (`--allow-net`).
  *
@@ -257,40 +331,3 @@ export type RuntimePermission =
     type: 'import'
     hosts?: string[]
   }
-
-export function toDenoPermission(
-  permissions: RuntimePermission[]
-): Deno.PermissionOptionsObject {
-  const result: Record<string, string[] | undefined> = {}
-
-  for (const permission of permissions) {
-    switch (permission.type) {
-      case 'net':
-        result.net = permission.urls
-        break
-      case 'read':
-        result.read = permission.paths
-        break
-      case 'write':
-        result.write = permission.paths
-        break
-      case 'env':
-        result.env = permission.variables
-        break
-      case 'sys':
-        result.sys = permission.apis
-        break
-      case 'run':
-        result.run = permission.programs
-        break
-      case 'ffi':
-        result.ffi = permission.paths
-        break
-      case 'import':
-        result.import = permission.hosts
-        break
-    }
-  }
-
-  return result as Deno.PermissionOptionsObject
-}

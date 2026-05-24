@@ -3,7 +3,9 @@
   "description": "Toolkit for the next generation of extensible applications",
   "version": "0.0.0",
   "tasks": {
-    "test": "deno test --preload setupTests.ts --parallel --allow-all --coverage"
+    "test": "deno test --preload setupTests.ts --parallel --allow-all --unstable-worker-options --coverage",
+    "test:windows": "deno test --preload setupTests.ts --allow-all --unstable-worker-options --coverage --unstable",
+    "test:windows:debug": "$env:WEAVER_DEBUG='1'; deno task test:windows"
   },
   "exports": "./mod.ts",
   "imports": {

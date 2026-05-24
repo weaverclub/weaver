@@ -19,12 +19,9 @@ import {
   type RuntimePermission,
   toDenoPermission
 } from './runtimePermission.ts'
-import { type Message, parseMessage } from './protocol.ts'
+import { parseMessage, WorkerMessage } from './protocol.ts'
 
-const WorkerId = Schema.UUID.pipe(Schema.brand('WorkerId'))
-const WorkerURL = Schema.URL.pipe(Schema.brand('WorkerURL'))
-
-const parseWorkerURL = Schema.decodeUnknown(WorkerURL)
+export const WorkerId = Schema.UUID.pipe(Schema.brand('WorkerId'))
 
 export class WorkerCrashedError extends Data.TaggedError('WorkerCrashedError')<{
   workerId: WorkerId
@@ -40,7 +37,10 @@ export class WorkerDeserializationError
 function acquireWorker(
   { pluginManifest, givenRuntimePermissions }: AcquireWorkerOptions
 ) {
-  return parseWorkerURL(pluginManifest.path).pipe(
+  return Effect.sync(() => new URL(pluginManifest.path, import.meta.url)).pipe(
+    Effect.tap((url) =>
+      Effect.logDebug('Resolved worker URL', { url: url.href })
+    ),
     Effect.map((url) =>
       new Worker(url, {
         type: 'module',
@@ -49,6 +49,7 @@ function acquireWorker(
         }
       })
     ),
+    Effect.tap(() => Effect.logDebug('Worker instance created')),
     Effect.acquireRelease(
       (worker) => Effect.sync(() => worker.terminate())
     )
@@ -62,16 +63,32 @@ function setupWorker(
   >
 ) {
   return Effect.gen(function* () {
+    yield* Effect.logDebug('Setting up worker handlers', {
+      workerId: handle.id
+    })
+
     const crashed = yield* Deferred.make<
       never,
       WorkerCrashedError | WorkerDeserializationError
     >()
-    const inbox = yield* Queue.unbounded<Message>()
+    const inbox = yield* Queue.unbounded<WorkerMessage>()
 
     function handleMessage(event: MessageEvent) {
       return parseMessage(event.data).pipe(
+        Effect.tap(() =>
+          Effect.logDebug('Received message from worker', {
+            workerId: handle.id
+          })
+        ),
         Effect.flatMap(
-          (msg) => Queue.offer(inbox, msg)
+          (message) =>
+            Queue.offer(
+              inbox,
+              WorkerMessage.make({
+                message,
+                workerId: handle.id
+              })
+            )
         ),
         Effect.catchAll(
           () =>
@@ -113,17 +130,25 @@ function setupWorker(
             handleMessage(event)
           )
 
-        handle.worker.onerror = (event) =>
+        handle.worker.onerror = (event) => {
+          event.preventDefault()
           Effect.runSync(
             handleError(event)
           )
+        }
 
-        handle.worker.onmessageerror = (event) =>
+        handle.worker.onmessageerror = (event) => {
+          event.preventDefault()
           Effect.runSync(
             handleMessageError(event)
           )
+        }
       }
     )
+
+    yield* Effect.logDebug('Worker handlers attached', {
+      workerId: handle.id
+    })
 
     return { inbox, crashed } as const
   })
@@ -141,18 +166,32 @@ function superviseWorker(
   }: SuperviseWorkerOptions
 ) {
   return Effect.gen(function* () {
+    yield* Effect.logDebug('Acquiring worker', {
+      workerId: id,
+      pluginId: pluginManifest.id
+    })
+
     const worker = yield* acquireWorker({
       givenRuntimePermissions,
       pluginManifest
     })
 
-    yield* Effect.log(`Worker ${id} acquired and started`, worker)
+    yield* Effect.log(`Worker ${id} acquired and started`)
+
+    yield* Effect.logDebug('Setting up worker', {
+      workerId: id,
+      pluginId: pluginManifest.id
+    })
 
     const { inbox, crashed } = yield* setupWorker({
       givenRuntimePermissions,
       id,
       pluginManifest,
       worker
+    })
+
+    yield* Effect.logDebug('Worker setup complete', {
+      workerId: id
     })
 
     const workerHandle: WorkerHandle = {
@@ -167,7 +206,17 @@ function superviseWorker(
     yield* Ref.update(handlesRef, HashMap.set(workerHandle.id, workerHandle))
     yield* Ref.set(workerHandle.status, { _tag: 'Running' })
 
+    yield* Effect.logDebug('Worker registered as Running', {
+      workerId: id
+    })
+
     yield* Queue.take(inbox).pipe(
+      Effect.tap((msg) =>
+        Effect.logDebug('Publishing message to PubSub', {
+          workerId: id,
+          event: msg.message.event
+        })
+      ),
       Effect.flatMap(
         (msg) => PubSub.publish(ps, msg)
       ),
@@ -175,8 +224,21 @@ function superviseWorker(
       Effect.forkScoped
     )
 
+    yield* Effect.logDebug('Awaiting worker crash or termination signal', {
+      workerId: id
+    })
+
     yield* Deferred.await(crashed)
+
+    yield* Effect.logDebug('Worker crash signal received', {
+      workerId: id
+    })
   }).pipe(
+    Effect.annotateLogs({
+      workerId: id,
+      pluginId: pluginManifest.id
+    }),
+    Effect.withLogSpan('superviseWorker'),
     Scope.extend(scope),
     Effect.retry(
       Schedule.exponential('100 millis').pipe(
@@ -186,6 +248,10 @@ function superviseWorker(
     Effect.onExit(
       (exit) =>
         Effect.gen(function* () {
+          yield* Effect.logDebug('Supervisor handling worker exit', {
+            exitTag: exit._tag
+          })
+
           if (Exit.isSuccess(exit)) {
             yield* Ref.set(status, { _tag: 'Terminated' })
           } else if (Exit.isInterrupted(exit)) {
@@ -212,11 +278,21 @@ export class Supervisor extends Effect.Service<Supervisor>()(
         HashMap.empty<WorkerId, WorkerHandle>()
       )
 
+      yield* Effect.logDebug('Supervisor initialized')
+
       function start(options: StartWorkerOptions) {
         return Effect.gen(function* () {
+          yield* Effect.logDebug('Starting worker', {
+            pluginId: options.pluginManifest.id
+          })
+
           const id = WorkerId.make(crypto.randomUUID())
           const status = yield* Ref.make<WorkerStatus>({ _tag: 'Running' })
           const scope = yield* Scope.make()
+
+          yield* Effect.logDebug('Created worker scope', {
+            workerId: id
+          })
 
           const fiber = yield* FiberMap.run(
             fibers,
@@ -232,32 +308,45 @@ export class Supervisor extends Effect.Service<Supervisor>()(
             )
           )
 
-          fiber.addObserver((exit) => {
-            console.log(`Worker ${id} exited with`, exit)
-          })
-
           yield* Effect.log(`Started fiber for worker ${id}`, {
             id,
             fiber: fiber.status
           })
 
           return { id, fiber, status }
-        })
+        }).pipe(Effect.withLogSpan('supervisor.start'))
       }
 
       function interrupt(id: WorkerId) {
         return Effect.gen(function* () {
+          yield* Effect.logDebug('Interrupting worker', { workerId: id })
+
           const handle = yield* get(id)
 
           if (Option.isSome(handle)) {
+            yield* Effect.logDebug('Removing worker fiber and handle', {
+              workerId: id
+            })
             yield* FiberMap.remove(fibers, id)
             yield* Ref.update(handlesRef, HashMap.remove(id))
+            yield* Effect.logDebug('Worker interrupted and removed', {
+              workerId: id
+            })
+          } else {
+            yield* Effect.logDebug('Worker not found for interrupt', {
+              workerId: id
+            })
           }
         })
       }
 
       function get(id: WorkerId) {
-        return Ref.get(handlesRef).pipe(Effect.map(HashMap.get(id)))
+        return Ref.get(handlesRef).pipe(
+          Effect.tap(() =>
+            Effect.logDebug('Looking up worker handle', { workerId: id })
+          ),
+          Effect.map(HashMap.get(id))
+        )
       }
 
       return {
@@ -275,11 +364,11 @@ type AcquireWorkerOptions = {
 }
 
 type StartWorkerOptions = AcquireWorkerOptions & {
-  ps: PubSub.PubSub<Message>
+  ps: PubSub.PubSub<WorkerMessage>
 }
 
 type SuperviseWorkerOptions = Omit<WorkerHandle, 'worker'> & {
-  ps: PubSub.PubSub<Message>
+  ps: PubSub.PubSub<WorkerMessage>
   handlesRef: Ref.Ref<HashMap.HashMap<WorkerId, WorkerHandle>>
 }
 

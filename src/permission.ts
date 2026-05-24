@@ -30,10 +30,6 @@ export function permission(options: Permission): Permission {
   return mergedOptions
 }
 
-export function extractPermissionKeys(permissions: Permission[]) {
-  return permissions.map((perm) => perm.key)
-}
-
 export type Permission = {
   /**
    * A unique key for the permission, used for checking if a plugin has the
@@ -46,13 +42,4 @@ export type Permission = {
    * debugging purposes.
    */
   description: string
-
-  /**
-   * Whether the permission is required or optional.
-   *
-   * Required permissions must be granted by the host for the plugin to work,
-   * while optional permissions can be granted or denied by the host without
-   * affecting the plugin's functionality.
-   */
-  required?: boolean
 }
