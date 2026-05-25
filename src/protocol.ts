@@ -1,5 +1,5 @@
 import { Schema } from 'effect'
-import { WorkerId } from './supervisor.ts'
+import { WorkerId } from './workerId.ts'
 
 export const Message = Schema.Struct({
   id: Schema.UUID,

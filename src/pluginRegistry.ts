@@ -31,6 +31,12 @@ export class PluginRegistry extends Effect.Service<PluginRegistry>()(
     effect: Effect.gen(function* () {
       const storage = yield* Storage
 
+      function initializeInstalledPlugins() {
+        return Effect.gen(function* () {
+          yield* storage.set(CONSTANTS.InstalledPlugins, [])
+        })
+      }
+
       function getInstalledPlugins() {
         return Effect.gen(function* () {
           const rawInstalledPlugins = yield* storage.get(
@@ -38,7 +44,15 @@ export class PluginRegistry extends Effect.Service<PluginRegistry>()(
           )
 
           return yield* parseInstalledPluginsArray(rawInstalledPlugins)
-        })
+        }).pipe(
+          Effect.catchTag(
+            'ItemNotFoundError',
+            () =>
+              initializeInstalledPlugins().pipe(
+                Effect.andThen(() => [] as InstallPlugin[])
+              )
+          )
+        )
       }
 
       function installPlugin(plugin: InstallPlugin) {

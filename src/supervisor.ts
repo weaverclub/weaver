@@ -11,7 +11,6 @@ import {
   Queue,
   Ref,
   Schedule,
-  Schema,
   Scope
 } from 'effect'
 import type { PluginManifest } from './plugin.ts'
@@ -20,8 +19,7 @@ import {
   toDenoPermission
 } from './runtimePermission.ts'
 import { type Message, parseMessage, WorkerMessage } from './protocol.ts'
-
-export const WorkerId = Schema.UUID.pipe(Schema.brand('WorkerId'))
+import { WorkerId } from './workerId.ts'
 
 export class WorkerCrashedError extends Data.TaggedError('WorkerCrashedError')<{
   workerId: WorkerId
@@ -438,8 +436,6 @@ type SuperviseWorkerOptions = Omit<WorkerHandle, 'worker'> & {
   workerLifecycleEvents: PubSub.PubSub<WorkerLifecycleEvent>
   handlesRef: Ref.Ref<HashMap.HashMap<WorkerId, WorkerHandle>>
 }
-
-export type WorkerId = typeof WorkerId.Type
 
 type WorkerStatus = {
   _tag: 'Running'

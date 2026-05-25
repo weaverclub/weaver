@@ -1,9 +1,6 @@
 import { Effect, Layer, PubSub } from 'effect'
-import {
-  Supervisor,
-  type WorkerId,
-  type WorkerLifecycleEvent
-} from './supervisor.ts'
+import { Supervisor, type WorkerLifecycleEvent } from './supervisor.ts'
+import type { WorkerId } from './workerId.ts'
 import { type InstallPlugin, PluginRegistry } from './pluginRegistry.ts'
 import { Message, type WorkerMessage } from './protocol.ts'
 import type { RuntimePermission } from './runtimePermission.ts'
