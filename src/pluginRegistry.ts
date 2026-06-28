@@ -1,7 +1,6 @@
 import { Data, Effect, Schema } from 'effect'
 import { Storage } from './storage.ts'
-import { PluginManifest } from './plugin.ts'
-import { RuntimePermissionSchema } from './runtimePermission.ts'
+import { InstalledPlugin, type InstallPlugin } from './plugin.ts'
 
 const CONSTANTS = {
   'InstalledPlugins': '__weaver_installed_plugins__',
@@ -9,15 +8,8 @@ const CONSTANTS = {
   'OnStart': '__weaver_lifecycle_on_start__'
 }
 
-const installedPlugin = PluginManifest.pipe(
-  Schema.extend(Schema.Struct({
-    givenRuntimePermissions: Schema.Array(RuntimePermissionSchema),
-    givenPermissions: Schema.Array(Schema.String)
-  }))
-)
-
 const parseInstalledPluginsArray = Schema.decodeUnknown(
-  Schema.Array(installedPlugin)
+  Schema.Array(InstalledPlugin)
 )
 
 export class PluginAlreadyInstalledError
@@ -89,5 +81,3 @@ export class PluginRegistry extends Effect.Service<PluginRegistry>()(
 ) {
   static CONSTANTS = CONSTANTS
 }
-
-export type InstallPlugin = typeof installedPlugin.Type

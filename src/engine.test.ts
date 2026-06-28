@@ -1,9 +1,10 @@
-import { Effect, Exit, Layer } from 'effect'
+import { Effect, Exit, Layer, PubSub, Queue } from 'effect'
 import { Engine } from './engine.ts'
 import { Supervisor } from './supervisor.ts'
 import { PluginRegistry } from './pluginRegistry.ts'
 import { ItemNotFoundError, Storage, StorageError } from './storage.ts'
 import { PluginManifest } from './plugin.ts'
+import type { WorkerMessage } from './protocol.ts'
 import { assert, assertEquals } from '@std/assert'
 import { LoggerLayer, MinimumLogLevelLayer } from './log.ts'
 
@@ -11,39 +12,42 @@ const installTestPlugin = {
   ...PluginManifest.make({
     id: 'install-test',
     name: 'Install Test Plugin',
-    requestPermissions: [],
-    path: '../test-workers/testWorker.ts',
-    supportedVersions: ['1.0.0'],
+    requestedHostPermissions: [],
+    requestedRuntimePermissions: [],
+    entrypoint: '../test-workers/testWorker.ts',
+    supportedHostVersions: ['1.0.0'],
     version: '1.0.0'
   }),
-  givenRuntimePermissions: [],
-  givenPermissions: []
+  grantedRuntimePermissions: [],
+  grantedHostPermissions: []
 }
 
 const installTestPlugin2 = {
   ...PluginManifest.make({
     id: 'install-test-2',
     name: 'Install Test Plugin 2',
-    requestPermissions: [],
-    path: '../test-workers/testWorker.ts',
-    supportedVersions: ['1.0.0'],
+    requestedHostPermissions: [],
+    requestedRuntimePermissions: [],
+    entrypoint: '../test-workers/testWorker.ts',
+    supportedHostVersions: ['1.0.0'],
     version: '1.0.0'
   }),
-  givenRuntimePermissions: [],
-  givenPermissions: []
+  grantedRuntimePermissions: [],
+  grantedHostPermissions: []
 }
 
 const installTestPlugin3 = {
   ...PluginManifest.make({
     id: 'install-test-3',
     name: 'Install Test Plugin 3',
-    requestPermissions: [],
-    path: '../test-workers/testWorker.ts',
-    supportedVersions: ['1.0.0'],
+    requestedHostPermissions: [],
+    requestedRuntimePermissions: [],
+    entrypoint: '../test-workers/testWorker.ts',
+    supportedHostVersions: ['1.0.0'],
     version: '1.0.0'
   }),
-  givenRuntimePermissions: [],
-  givenPermissions: []
+  grantedRuntimePermissions: [],
+  grantedHostPermissions: []
 }
 
 function ephemeralStorage() {
@@ -277,12 +281,178 @@ Deno.test('engine install persists multiple different plugins', async () => {
   assertEquals(ids, ['install-test', 'install-test-2'])
 })
 
+const messagePlugin = PluginManifest.make({
+  id: 'message',
+  name: 'Message Plugin',
+  requestedHostPermissions: [],
+  requestedRuntimePermissions: [],
+  entrypoint: '../test-workers/testMessageWorker.ts',
+  supportedHostVersions: ['1.0.0'],
+  version: '1.0.0'
+})
+
 Deno.test('engine start succeeds with no pre-installed plugins', async () => {
   const { layer } = ephemeralStorage()
 
   const effect = Effect.gen(function* () {
     const engine = yield* Engine
     yield* engine.start()
+  })
+
+  const exit = await runEngine(Effect.scoped(effect), layer)
+  assert(Exit.isSuccess(exit))
+})
+
+Deno.test('engine install then start on fresh engine dispatches onStart for installed plugin', async () => {
+  const { layer } = ephemeralStorage()
+
+  const installEffect = Effect.gen(function* () {
+    const engine = yield* Engine
+    yield* engine.install(installTestPlugin)
+  })
+
+  const installExit = await runEngine(Effect.scoped(installEffect), layer)
+  assert(Exit.isSuccess(installExit))
+
+  const startEffect = Effect.gen(function* () {
+    const engine = yield* Engine
+    yield* engine.start()
+  })
+
+  await withPostMessageSpy(async (messages) => {
+    const startExit = await runEngine(Effect.scoped(startEffect), layer)
+    assert(Exit.isSuccess(startExit))
+
+    const onStartMessage = messages.find(
+      (m: any) => m.event === PluginRegistry.CONSTANTS.OnStart
+    )
+    assert(onStartMessage !== undefined)
+    assertEquals((onStartMessage as any).payload.id, installTestPlugin.id)
+  })
+})
+
+Deno.test('engine start does not dispatch onStart for plugins installed after engine initialization', async () => {
+  const { store, layer } = ephemeralStorage()
+  store.set(PluginRegistry.CONSTANTS.InstalledPlugins, [installTestPlugin])
+
+  const effect = Effect.gen(function* () {
+    const engine = yield* Engine
+    yield* engine.install(installTestPlugin2)
+    yield* engine.start()
+  })
+
+  await withPostMessageSpy(async (messages) => {
+    const exit = await runEngine(Effect.scoped(effect), layer)
+    assert(Exit.isSuccess(exit))
+
+    const onStartMessages = messages.filter(
+      (m: any) => m.event === PluginRegistry.CONSTANTS.OnStart
+    )
+    assertEquals(onStartMessages.length, 1)
+    assertEquals((onStartMessages[0] as any).payload.id, installTestPlugin.id)
+  })
+})
+
+Deno.test('engine start then install dispatches onStart and onInstall', async () => {
+  const { store, layer } = ephemeralStorage()
+  store.set(PluginRegistry.CONSTANTS.InstalledPlugins, [installTestPlugin])
+
+  const effect = Effect.gen(function* () {
+    const engine = yield* Engine
+    yield* engine.start()
+    yield* engine.install(installTestPlugin2)
+  })
+
+  await withPostMessageSpy(async (messages) => {
+    const exit = await runEngine(Effect.scoped(effect), layer)
+    assert(Exit.isSuccess(exit))
+
+    const onStartMessages = messages.filter(
+      (m: any) => m.event === PluginRegistry.CONSTANTS.OnStart
+    )
+    assertEquals(onStartMessages.length, 1)
+    assertEquals((onStartMessages[0] as any).payload.id, installTestPlugin.id)
+
+    const onInstallMessages = messages.filter(
+      (m: any) => m.event === PluginRegistry.CONSTANTS.OnInstall
+    )
+    assertEquals(onInstallMessages.length, 1)
+    assertEquals(
+      (onInstallMessages[0] as any).payload.id,
+      installTestPlugin2.id
+    )
+  })
+})
+
+Deno.test('engine install duplicate leaves original plugin untouched', async () => {
+  const { store, layer } = ephemeralStorage()
+  store.set(PluginRegistry.CONSTANTS.InstalledPlugins, [installTestPlugin])
+
+  const effect = Effect.gen(function* () {
+    const engine = yield* Engine
+    yield* engine.install(installTestPlugin)
+  })
+
+  const exit = await runEngine(Effect.scoped(effect), layer)
+  assert(Exit.isFailure(exit))
+
+  const installedPlugins = store.get(
+    PluginRegistry.CONSTANTS.InstalledPlugins
+  ) as any[]
+
+  assertEquals(installedPlugins.length, 1)
+  assertEquals(installedPlugins[0].id, 'install-test')
+})
+
+Deno.test('engine start fails with corrupted storage data', async () => {
+  const { store, layer } = ephemeralStorage()
+  store.set(PluginRegistry.CONSTANTS.InstalledPlugins, 'invalid-data')
+
+  const effect = Effect.gen(function* () {
+    const engine = yield* Engine
+    yield* engine.start()
+  })
+
+  const exit = await runEngine(Effect.scoped(effect), layer)
+  assert(Exit.isFailure(exit))
+})
+
+Deno.test('engine start succeeds when storage key is missing', async () => {
+  const { layer } = ephemeralStorage()
+
+  const effect = Effect.gen(function* () {
+    const engine = yield* Engine
+    yield* engine.start()
+  })
+
+  const exit = await runEngine(Effect.scoped(effect), layer)
+  assert(Exit.isSuccess(exit))
+})
+
+Deno.test('engine supervisor routes worker messages through PubSub', async () => {
+  const { layer } = ephemeralStorage()
+
+  const effect = Effect.gen(function* () {
+    const engine = yield* Engine
+    const workerMessages = yield* PubSub.unbounded<WorkerMessage>()
+    const workerLifecycleEvents = yield* PubSub.unbounded<any>()
+    const subscription = yield* PubSub.subscribe(workerMessages)
+
+    const { id } = yield* engine.supervisor.start({
+      grantedRuntimePermissions: [],
+      pluginManifest: messagePlugin,
+      workerMessages,
+      workerLifecycleEvents
+    })
+
+    const msg = yield* Queue.take(subscription).pipe(
+      Effect.timeout('5 seconds')
+    )
+
+    assertEquals(msg.message.event, 'test.message')
+    assertEquals(msg.message.payload, { value: 42 })
+
+    yield* engine.supervisor.interrupt(id)
   })
 
   const exit = await runEngine(Effect.scoped(effect), layer)

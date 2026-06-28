@@ -1,12 +1,12 @@
 import { Effect, Layer, PubSub } from 'effect'
 import { Supervisor, type WorkerLifecycleEvent } from './supervisor.ts'
 import type { WorkerId } from './workerId.ts'
-import { type InstallPlugin, PluginRegistry } from './pluginRegistry.ts'
+import { PluginRegistry } from './pluginRegistry.ts'
 import { Message, type WorkerMessage } from './protocol.ts'
 import type { RuntimePermission } from './runtimePermission.ts'
 import { ItemNotFoundError, Storage, StorageError } from './storage.ts'
 import type { Host } from './host.ts'
-import type { PluginManifest } from './plugin.ts'
+import type { InstallPlugin, PluginMetadata } from './plugin.ts'
 
 export function ephemeralStorage(): AsyncStorageImpl {
   const store = new Map<string, unknown>()
@@ -20,7 +20,9 @@ export function ephemeralStorage(): AsyncStorageImpl {
   }
 }
 
-export function engine<H extends Host<any>>(options: EngineOptions<H>) {
+export function engine<H extends Host<any>>(
+  options: EngineOptions<H>
+): EngineInstance {
   const storage = Storage.of({
     get: (key: string) =>
       Effect.tryPromise({
@@ -57,7 +59,7 @@ export function engine<H extends Host<any>>(options: EngineOptions<H>) {
     )
 
   return {
-    start: () => Effect.runPromise(start),
+    start: () => Effect.runPromise(start).then(() => undefined),
     install: (plugin: InstallPlugin) => Effect.runPromise(install(plugin))
   } as const
 }
@@ -73,16 +75,11 @@ export class Engine extends Effect.Service<Engine>()(
         WorkerLifecycleEvent
       >()
 
-      const consumerOfWorkerMessages = PubSub.subscribe(workerMessages)
-      const consumerOfWorkerLifecycleEvents = PubSub.subscribe(
-        workerLifecycleEvents
-      )
-
       const plugins = yield* pluginRegistry.getInstalledPlugins()
 
       function dispatchOnInstall(
         workerId: WorkerId,
-        pluginManifest: PluginManifest
+        pluginManifest: PluginMetadata
       ) {
         return supervisor.notify(
           workerId,
@@ -96,7 +93,7 @@ export class Engine extends Effect.Service<Engine>()(
 
       function dispatchOnStart(
         workerId: WorkerId,
-        pluginManifest: PluginManifest
+        pluginManifest: PluginMetadata
       ) {
         return supervisor.notify(
           workerId,
@@ -114,8 +111,8 @@ export class Engine extends Effect.Service<Engine>()(
           (plugin) =>
             supervisor.start({
               pluginManifest: plugin,
-              givenRuntimePermissions: plugin
-                .givenRuntimePermissions as RuntimePermission[],
+              grantedRuntimePermissions: plugin
+                .grantedRuntimePermissions as RuntimePermission[],
               workerMessages,
               workerLifecycleEvents
             }).pipe(
@@ -135,8 +132,8 @@ export class Engine extends Effect.Service<Engine>()(
 
           const process = yield* supervisor.start({
             pluginManifest: plugin,
-            givenRuntimePermissions: plugin
-              .givenRuntimePermissions as RuntimePermission[],
+            grantedRuntimePermissions: plugin
+              .grantedRuntimePermissions as RuntimePermission[],
             workerLifecycleEvents,
             workerMessages
           })
@@ -169,6 +166,11 @@ type AsyncStorageImpl = {
    * resolves when the value has been successfully stored.
    */
   set: (key: string, value: unknown) => Promise<void>
+}
+
+export type EngineInstance = {
+  start: () => Promise<void>
+  install: (plugin: InstallPlugin) => Promise<void>
 }
 
 export type EngineOptions<H extends Host<any>> = {

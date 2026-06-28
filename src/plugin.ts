@@ -3,15 +3,45 @@ import type { Permission } from './permission.ts'
 import type { Hook } from './hook.ts'
 import type { StandardSchemaV1 } from '@standard-schema/spec'
 import { Schema } from 'effect'
+import { RuntimePermissionSchema } from './runtimePermission.ts'
 
-export const PluginManifest = Schema.Struct({
+const stringArray = Schema.Array(Schema.String)
+const runtimePermissionArray = Schema.Array(RuntimePermissionSchema)
+
+const pluginMetadataFields: {
+  readonly id: typeof Schema.String
+  readonly name: typeof Schema.String
+  readonly version: typeof Schema.String
+  readonly supportedHostVersions: typeof stringArray
+  readonly entrypoint: typeof Schema.String
+  readonly requestedHostPermissions: typeof stringArray
+  readonly requestedRuntimePermissions: typeof runtimePermissionArray
+} = {
   id: Schema.String,
   name: Schema.String,
   version: Schema.String,
-  supportedVersions: Schema.Array(Schema.String),
-  requestPermissions: Schema.Array(Schema.String),
-  path: Schema.String
-})
+  supportedHostVersions: stringArray,
+  entrypoint: Schema.String,
+  requestedHostPermissions: stringArray,
+  requestedRuntimePermissions: runtimePermissionArray
+}
+
+export const PluginMetadata: Schema.Struct<typeof pluginMetadataFields> = Schema
+  .Struct(pluginMetadataFields)
+
+const installedPluginFields: typeof pluginMetadataFields & {
+  readonly grantedHostPermissions: typeof stringArray
+  readonly grantedRuntimePermissions: typeof runtimePermissionArray
+} = {
+  ...pluginMetadataFields,
+  grantedHostPermissions: stringArray,
+  grantedRuntimePermissions: runtimePermissionArray
+}
+
+export const InstalledPlugin: Schema.Struct<typeof installedPluginFields> =
+  Schema.Struct(installedPluginFields)
+
+export const PluginManifest = PluginMetadata
 
 export function plugin<
   H extends Host<any>,
@@ -61,14 +91,14 @@ export type Plugin<
    * version ranges (e.g., [">=1.0.0", "<2.0.0"]) or a single version range
    * (e.g., ">=1.0.0 <2.0.0").
    */
-  supportedVersions: string[] | string
+  supportedHostVersions: string[] | string
 
   /**
    * The permissions that the plugin requests from the host. The host can use
    * this information to determine whether to allow the plugin to be installed
    * based on the permissions granted to the plugin.
    */
-  requestPermissions: Permission[]
+  requestedHostPermissions: Permission[]
 
   /**
    * Hooks that the plugin registers to listen for specific events in the host.
@@ -78,4 +108,10 @@ export type Plugin<
   hooks: Hooks
 }
 
-export type PluginManifest = typeof PluginManifest.Type
+export type PluginMetadata = typeof PluginMetadata.Type
+
+export type InstalledPlugin = typeof InstalledPlugin.Type
+
+export type InstallPlugin = InstalledPlugin
+
+export type PluginManifest = PluginMetadata

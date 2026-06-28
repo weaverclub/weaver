@@ -1,70 +1,73 @@
 import { Schema } from 'effect'
 
-export const RuntimePermissionSchema = Schema.Union(
-  Schema.Struct({
-    type: Schema.Literal('net'),
-    urls: Schema.optional(Schema.Array(Schema.String))
-  }),
-  Schema.Struct({
-    type: Schema.Literal('read'),
-    paths: Schema.optional(Schema.Array(Schema.String))
-  }),
-  Schema.Struct({
-    type: Schema.Literal('write'),
-    paths: Schema.optional(Schema.Array(Schema.String))
-  }),
-  Schema.Struct({
-    type: Schema.Literal('env'),
-    variables: Schema.optional(Schema.Array(Schema.String))
-  }),
-  Schema.Struct({
-    type: Schema.Literal('sys'),
-    apis: Schema.optional(Schema.Array(Schema.String))
-  }),
-  Schema.Struct({
-    type: Schema.Literal('run'),
-    programs: Schema.optional(Schema.Array(Schema.String))
-  }),
-  Schema.Struct({
-    type: Schema.Literal('ffi'),
-    paths: Schema.optional(Schema.Array(Schema.String))
-  }),
-  Schema.Struct({
-    type: Schema.Literal('import'),
-    hosts: Schema.optional(Schema.Array(Schema.String))
-  })
-)
+export const RuntimePermissionSchema: Schema.Schema<RuntimePermission> = Schema
+  .Union(
+    Schema.Struct({
+      type: Schema.Literal('net'),
+      urls: Schema.optional(Schema.Array(Schema.String))
+    }),
+    Schema.Struct({
+      type: Schema.Literal('read'),
+      paths: Schema.optional(Schema.Array(Schema.String))
+    }),
+    Schema.Struct({
+      type: Schema.Literal('write'),
+      paths: Schema.optional(Schema.Array(Schema.String))
+    }),
+    Schema.Struct({
+      type: Schema.Literal('env'),
+      variables: Schema.optional(Schema.Array(Schema.String))
+    }),
+    Schema.Struct({
+      type: Schema.Literal('sys'),
+      apis: Schema.optional(Schema.Array(Schema.String))
+    }),
+    Schema.Struct({
+      type: Schema.Literal('run'),
+      programs: Schema.optional(Schema.Array(Schema.String))
+    }),
+    Schema.Struct({
+      type: Schema.Literal('ffi'),
+      paths: Schema.optional(Schema.Array(Schema.String))
+    }),
+    Schema.Struct({
+      type: Schema.Literal('import'),
+      hosts: Schema.optional(Schema.Array(Schema.String))
+    })
+  )
 
 export function toDenoPermission(
-  permissions: RuntimePermission[]
+  permissions: readonly RuntimePermission[]
 ): Deno.PermissionOptionsObject {
   const result: Record<string, string[] | undefined> = {}
 
   for (const permission of permissions) {
     switch (permission.type) {
       case 'net':
-        result.net = permission.urls
+        result.net = permission.urls ? [...permission.urls] : undefined
         break
       case 'read':
-        result.read = permission.paths
+        result.read = permission.paths ? [...permission.paths] : undefined
         break
       case 'write':
-        result.write = permission.paths
+        result.write = permission.paths ? [...permission.paths] : undefined
         break
       case 'env':
         result.env = permission.variables
+          ? [...permission.variables]
+          : undefined
         break
       case 'sys':
-        result.sys = permission.apis
+        result.sys = permission.apis ? [...permission.apis] : undefined
         break
       case 'run':
-        result.run = permission.programs
+        result.run = permission.programs ? [...permission.programs] : undefined
         break
       case 'ffi':
-        result.ffi = permission.paths
+        result.ffi = permission.paths ? [...permission.paths] : undefined
         break
       case 'import':
-        result.import = permission.hosts
+        result.import = permission.hosts ? [...permission.hosts] : undefined
         break
     }
   }
@@ -238,7 +241,7 @@ export type RuntimePermission =
      * - `{ type: 'net', urls: ["[2606:4700:4700::1111]"] }` — allows an IPv6 address
      */
     type: 'net'
-    urls?: string[]
+    urls?: readonly string[] | undefined
   }
   | {
     /**
@@ -250,7 +253,7 @@ export type RuntimePermission =
      * - `{ type: 'read', paths: ["foo.txt", "bar.txt"] }` — allows reading specific files
      */
     type: 'read'
-    paths?: string[]
+    paths?: readonly string[] | undefined
   }
   | {
     /**
@@ -261,7 +264,7 @@ export type RuntimePermission =
      * - `{ type: 'write', paths: ["./data"] }` — allows writing to ./data and subdirectories
      */
     type: 'write'
-    paths?: string[]
+    paths?: readonly string[] | undefined
   }
   | {
     /**
@@ -273,7 +276,7 @@ export type RuntimePermission =
      * - `{ type: 'env', variables: ["AWS_*"] }` — allows all variables starting with AWS_ (suffix wildcard)
      */
     type: 'env'
-    variables?: string[]
+    variables?: readonly string[] | undefined
   }
   | {
     /**
@@ -286,7 +289,7 @@ export type RuntimePermission =
      * See: https://docs.deno.com/api/deno/~/Deno.SysPermissionDescriptor
      */
     type: 'sys'
-    apis?: string[]
+    apis?: readonly string[] | undefined
   }
   | {
     /**
@@ -300,7 +303,7 @@ export type RuntimePermission =
      * sandbox, as child processes run independently of the parent's permissions.
      */
     type: 'run'
-    programs?: string[]
+    programs?: readonly string[] | undefined
   }
   | {
     /**
@@ -314,7 +317,7 @@ export type RuntimePermission =
      * host process. Use with extreme caution.
      */
     type: 'ffi'
-    paths?: string[]
+    paths?: readonly string[] | undefined
   }
   | {
     /**
@@ -329,5 +332,5 @@ export type RuntimePermission =
      * Specifying an allow-list overrides these defaults.
      */
     type: 'import'
-    hosts?: string[]
+    hosts?: readonly string[] | undefined
   }

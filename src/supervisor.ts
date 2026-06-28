@@ -13,7 +13,7 @@ import {
   Schedule,
   Scope
 } from 'effect'
-import type { PluginManifest } from './plugin.ts'
+import type { PluginMetadata } from './plugin.ts'
 import {
   type RuntimePermission,
   toDenoPermission
@@ -38,31 +38,32 @@ export class NotifyWorkerError extends Data.TaggedError('NotifyWorkerError')<{
 }> {}
 
 function acquireWorker(
-  { pluginManifest, givenRuntimePermissions }: AcquireWorkerOptions
+  { pluginManifest, grantedRuntimePermissions }: AcquireWorkerOptions
 ) {
-  return Effect.sync(() => new URL(pluginManifest.path, import.meta.url)).pipe(
-    Effect.tap((url) =>
-      Effect.logDebug('Resolved worker URL', { url: url.href })
-    ),
-    Effect.map((url) =>
-      new Worker(url, {
-        type: 'module',
-        deno: {
-          permissions: toDenoPermission(givenRuntimePermissions)
-        }
-      })
-    ),
-    Effect.tap(() => Effect.logDebug('Worker instance created')),
-    Effect.acquireRelease(
-      (worker) => Effect.sync(() => worker.terminate())
+  return Effect.sync(() => new URL(pluginManifest.entrypoint, import.meta.url))
+    .pipe(
+      Effect.tap((url) =>
+        Effect.logDebug('Resolved worker URL', { url: url.href })
+      ),
+      Effect.map((url) =>
+        new Worker(url, {
+          type: 'module',
+          deno: {
+            permissions: toDenoPermission(grantedRuntimePermissions)
+          }
+        })
+      ),
+      Effect.tap(() => Effect.logDebug('Worker instance created')),
+      Effect.acquireRelease(
+        (worker) => Effect.sync(() => worker.terminate())
+      )
     )
-  )
 }
 
 function setupWorker(
   handle: Pick<
     WorkerHandle,
-    'id' | 'pluginManifest' | 'givenRuntimePermissions' | 'worker'
+    'id' | 'pluginManifest' | 'grantedRuntimePermissions' | 'worker'
   >
 ) {
   return Effect.gen(function* () {
@@ -159,7 +160,7 @@ function setupWorker(
 
 function superviseWorker(
   {
-    givenRuntimePermissions,
+    grantedRuntimePermissions,
     id,
     status,
     pluginManifest,
@@ -176,7 +177,7 @@ function superviseWorker(
     })
 
     const worker = yield* acquireWorker({
-      givenRuntimePermissions,
+      grantedRuntimePermissions,
       pluginManifest
     })
 
@@ -188,7 +189,7 @@ function superviseWorker(
     })
 
     const { inbox, crashed } = yield* setupWorker({
-      givenRuntimePermissions,
+      grantedRuntimePermissions,
       id,
       pluginManifest,
       worker
@@ -199,7 +200,7 @@ function superviseWorker(
     })
 
     const workerHandle: WorkerHandle = {
-      givenRuntimePermissions,
+      grantedRuntimePermissions,
       id,
       pluginManifest,
       scope,
@@ -422,8 +423,8 @@ export class Supervisor extends Effect.Service<Supervisor>()(
 ) {}
 
 type AcquireWorkerOptions = {
-  pluginManifest: PluginManifest
-  givenRuntimePermissions: RuntimePermission[]
+  pluginManifest: PluginMetadata
+  grantedRuntimePermissions: RuntimePermission[]
 }
 
 type StartWorkerOptions = AcquireWorkerOptions & {
@@ -451,27 +452,27 @@ type WorkerStatus = {
 type WorkerHandle = {
   id: WorkerId
   worker: Worker
-  pluginManifest: PluginManifest
-  givenRuntimePermissions: RuntimePermission[]
+  pluginManifest: PluginMetadata
+  grantedRuntimePermissions: RuntimePermission[]
   scope: Scope.CloseableScope
   status: Ref.Ref<WorkerStatus>
 }
 
 export type WorkerLifecycleEvent = {
   _tag: 'WorkerStarted'
-  pluginManifest: PluginManifest
+  pluginManifest: PluginMetadata
   workerId: WorkerId
 } | {
   _tag: 'WorkerTerminated'
-  pluginManifest: PluginManifest
+  pluginManifest: PluginMetadata
   workerId: WorkerId
 } | {
   _tag: 'WorkerInterrupted'
-  pluginManifest: PluginManifest
+  pluginManifest: PluginMetadata
   workerId: WorkerId
 } | {
   _tag: 'WorkerCrashed'
-  pluginManifest: PluginManifest
+  pluginManifest: PluginMetadata
   workerId: WorkerId
   error: unknown
 }

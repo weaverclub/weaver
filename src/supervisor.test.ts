@@ -1,34 +1,37 @@
+import { assert, assertEquals } from '@std/assert'
 import { Effect, Fiber, PubSub, Queue, Ref } from 'effect'
-import { Supervisor } from './supervisor.ts'
+import { LoggerLayer, MinimumLogLevelLayer } from './log.ts'
 import { PluginManifest } from './plugin.ts'
 import type { WorkerMessage } from './protocol.ts'
-import { assert, assertEquals } from '@std/assert'
-import { LoggerLayer, MinimumLogLevelLayer } from './log.ts'
+import { Supervisor, type WorkerLifecycleEvent } from './supervisor.ts'
 
 const runningPlugin = PluginManifest.make({
   id: 'running',
   name: 'Running Plugin',
-  requestPermissions: [],
-  path: '../test-workers/testWorker.ts',
-  supportedVersions: ['1.0.0'],
+  requestedHostPermissions: [],
+  requestedRuntimePermissions: [],
+  entrypoint: '../test-workers/testWorker.ts',
+  supportedHostVersions: ['1.0.0'],
   version: '1.0.0'
 })
 
 const messagePlugin = PluginManifest.make({
   id: 'message',
   name: 'Message Plugin',
-  requestPermissions: [],
-  path: '../test-workers/testMessageWorker.ts',
-  supportedVersions: ['1.0.0'],
+  requestedHostPermissions: [],
+  requestedRuntimePermissions: [],
+  entrypoint: '../test-workers/testMessageWorker.ts',
+  supportedHostVersions: ['1.0.0'],
   version: '1.0.0'
 })
 
 const crashPlugin = PluginManifest.make({
   id: 'crash',
   name: 'Crash Plugin',
-  requestPermissions: [],
-  path: '../test-workers/testCrashWorker.ts',
-  supportedVersions: ['1.0.0'],
+  requestedHostPermissions: [],
+  requestedRuntimePermissions: [],
+  entrypoint: '../test-workers/testCrashWorker.ts',
+  supportedHostVersions: ['1.0.0'],
   version: '1.0.0'
 })
 
@@ -44,12 +47,16 @@ const runSupervisor = <A, E>(effect: Effect.Effect<A, E, any>) =>
 Deno.test('supervisor handles worker start', async () => {
   const effect = Effect.gen(function* () {
     const supervisor = yield* Supervisor
-    const ps = yield* PubSub.unbounded<WorkerMessage>()
+    const workerMessages = yield* PubSub.unbounded<WorkerMessage>()
+    const workerLifecycleEvents = yield* PubSub.unbounded<
+      WorkerLifecycleEvent
+    >()
 
     const { id } = yield* supervisor.start({
-      givenRuntimePermissions: [],
+      grantedRuntimePermissions: [],
       pluginManifest: runningPlugin,
-      ps
+      workerMessages,
+      workerLifecycleEvents
     })
 
     const workerHandle = yield* supervisor.get(id)
@@ -75,13 +82,17 @@ Deno.test('supervisor returns None for unknown worker', async () => {
 Deno.test('supervisor handles worker messages', async () => {
   const effect = Effect.gen(function* () {
     const supervisor = yield* Supervisor
-    const ps = yield* PubSub.unbounded<WorkerMessage>()
-    const subscription = yield* PubSub.subscribe(ps)
+    const workerMessages = yield* PubSub.unbounded<WorkerMessage>()
+    const workerLifecycleEvents = yield* PubSub.unbounded<
+      WorkerLifecycleEvent
+    >()
+    const subscription = yield* PubSub.subscribe(workerMessages)
 
     const { id } = yield* supervisor.start({
-      givenRuntimePermissions: [],
+      grantedRuntimePermissions: [],
       pluginManifest: messagePlugin,
-      ps
+      workerMessages,
+      workerLifecycleEvents
     })
 
     const msg = yield* Queue.take(subscription).pipe(
@@ -99,12 +110,16 @@ Deno.test('supervisor handles worker messages', async () => {
 Deno.test('supervisor handles worker interrupt', async () => {
   const effect = Effect.gen(function* () {
     const supervisor = yield* Supervisor
-    const ps = yield* PubSub.unbounded<WorkerMessage>()
+    const workerMessages = yield* PubSub.unbounded<WorkerMessage>()
+    const workerLifecycleEvents = yield* PubSub.unbounded<
+      WorkerLifecycleEvent
+    >()
 
     const { id, fiber, status } = yield* supervisor.start({
-      givenRuntimePermissions: [],
+      grantedRuntimePermissions: [],
       pluginManifest: runningPlugin,
-      ps
+      workerMessages,
+      workerLifecycleEvents
     })
 
     yield* supervisor.interrupt(id)
@@ -123,12 +138,16 @@ Deno.test('supervisor handles worker interrupt', async () => {
 Deno.test('supervisor handles worker crash', async () => {
   const effect = Effect.gen(function* () {
     const supervisor = yield* Supervisor
-    const ps = yield* PubSub.unbounded<WorkerMessage>()
+    const workerMessages = yield* PubSub.unbounded<WorkerMessage>()
+    const workerLifecycleEvents = yield* PubSub.unbounded<
+      WorkerLifecycleEvent
+    >()
 
     const { id, fiber, status } = yield* supervisor.start({
-      givenRuntimePermissions: [],
+      grantedRuntimePermissions: [],
       pluginManifest: crashPlugin,
-      ps
+      workerMessages,
+      workerLifecycleEvents
     })
 
     const exit = yield* Fiber.await(fiber).pipe(

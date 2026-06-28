@@ -18,9 +18,7 @@ export class PermissionsRequiredError
  * array and requested by plugins when they are installed.
  */
 export function permission(options: Permission): Permission {
-  const defaultOptions = {
-    required: false
-  }
+  const defaultOptions = {}
 
   const mergedOptions = {
     ...defaultOptions,

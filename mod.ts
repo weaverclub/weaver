@@ -10,4 +10,10 @@ export { $call, type RPC, rpc } from './src/rpc.ts'
 export { type Permission, permission } from './src/permission.ts'
 export { type Event, event } from './src/event.ts'
 export { engine, ephemeralStorage } from './src/engine.ts'
-export { plugin, PluginManifest } from './src/plugin.ts'
+export {
+  InstalledPlugin,
+  plugin,
+  PluginManifest,
+  PluginMetadata
+} from './src/plugin.ts'
+export type { InstallPlugin } from './src/plugin.ts'
