@@ -15,7 +15,13 @@ export {
   requirePermissions
 } from './src/permission.ts'
 export { event } from './src/event.ts'
-export { engine, ephemeralStorage } from './src/engine.ts'
+export {
+  engine,
+  ephemeralStorage,
+  HookDispatchFailedError,
+  HookDispatchTimedOutError,
+  HostRpcNotFoundError
+} from './src/engine.ts'
 export {
   InstalledPlugin,
   plugin,
@@ -23,6 +29,10 @@ export {
   PluginMetadata
 } from './src/plugin.ts'
 export { runPlugin } from './src/pluginRuntime.ts'
+export {
+  PluginAlreadyInstalledError,
+  PluginNotInstalledError
+} from './src/pluginRegistry.ts'
 export {
   env,
   ffi,
@@ -36,7 +46,14 @@ export {
   write
 } from './src/runtimePermission.ts'
 export type { Event } from './src/event.ts'
-export type { RuntimePermissionUpdate } from './src/engine.ts'
+export type {
+  PluginDisableUpdate,
+  PluginEnableUpdate,
+  PluginStatus,
+  PluginUninstallUpdate,
+  PluginUpdateResult,
+  RuntimePermissionUpdate
+} from './src/engine.ts'
 export type { Host } from './src/host.ts'
 export type { Permission } from './src/permission.ts'
 export type { InstallPlugin } from './src/plugin.ts'

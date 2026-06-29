@@ -228,6 +228,7 @@ Deno.test('supervisor handles worker crash', async () => {
 
     const finalStatus = yield* Ref.get(status)
     assert(finalStatus._tag === 'Crashed')
+    assertEquals(finalStatus.restartCount, 5)
 
     const handle = yield* supervisor.get(id)
     assert(handle._tag === 'Some')

@@ -1,7 +1,8 @@
 import { on, plugin } from 'weaver'
+import type { myHost } from './host.ts'
 import { afterCreateTask, manageTasks } from './api.ts'
 
-const _myPlugin = plugin<any>({
+const _myPlugin = plugin<typeof myHost>({
   id: 'my-plugin',
   name: 'My Plugin',
   version: '1.0.0',

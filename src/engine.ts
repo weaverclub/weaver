@@ -8,13 +8,15 @@ import {
   Option,
   PubSub,
   Queue,
+  Ref,
   Scope
 } from 'effect'
 import { Supervisor, type WorkerLifecycleEvent } from './supervisor.ts'
 import type { WorkerId } from './workerId.ts'
 import {
   type PluginPermissionUpdate,
-  PluginRegistry
+  PluginRegistry,
+  type PluginReplacementUpdate
 } from './pluginRegistry.ts'
 import {
   type HookDispatchPayload,
@@ -113,8 +115,7 @@ export function engine<H extends Host<any>>(
 
     return await Effect.runPromise(
       effect.pipe(
-        Effect.provide(builtContext),
-        Effect.orDie
+        Effect.provide(builtContext)
       )
     )
   }
@@ -128,6 +129,48 @@ export function engine<H extends Host<any>>(
     run(
       Engine.pipe(
         Effect.flatMap((engine) => engine.install(plugin))
+      )
+    )
+
+  const getPluginStatus = (pluginId: string) =>
+    run(
+      Engine.pipe(
+        Effect.flatMap((engine) => engine.getPluginStatus(pluginId))
+      )
+    )
+
+  const getPluginStatuses = () =>
+    run(
+      Engine.pipe(
+        Effect.flatMap((engine) => engine.getPluginStatuses())
+      )
+    )
+
+  const disablePlugin = (pluginId: string) =>
+    run(
+      Engine.pipe(
+        Effect.flatMap((engine) => engine.disablePlugin(pluginId))
+      )
+    )
+
+  const enablePlugin = (pluginId: string) =>
+    run(
+      Engine.pipe(
+        Effect.flatMap((engine) => engine.enablePlugin(pluginId))
+      )
+    )
+
+  const uninstallPlugin = (pluginId: string) =>
+    run(
+      Engine.pipe(
+        Effect.flatMap((engine) => engine.uninstallPlugin(pluginId))
+      )
+    )
+
+  const updatePlugin = (plugin: InstallPlugin) =>
+    run(
+      Engine.pipe(
+        Effect.flatMap((engine) => engine.updatePlugin(plugin))
       )
     )
 
@@ -219,6 +262,12 @@ export function engine<H extends Host<any>>(
   return {
     start: () => start().then(() => undefined),
     install: (plugin: InstallPlugin) => install(plugin),
+    getPluginStatus: (pluginId: string) => getPluginStatus(pluginId),
+    getPluginStatuses,
+    disablePlugin: (pluginId: string) => disablePlugin(pluginId),
+    enablePlugin: (pluginId: string) => enablePlugin(pluginId),
+    uninstallPlugin: (pluginId: string) => uninstallPlugin(pluginId),
+    updatePlugin: (plugin: InstallPlugin) => updatePlugin(plugin),
     grantHostPermission: (
       pluginId: string,
       permission: Permission | string
@@ -253,6 +302,10 @@ export class Engine extends Effect.Service<Engine>()(
         WorkerLifecycleEvent
       >()
       const workerMessageSubscription = yield* PubSub.subscribe(workerMessages)
+      const workerLifecycleSubscription = yield* PubSub.subscribe(
+        workerLifecycleEvents
+      )
+      const engineStarted = yield* Ref.make(false)
       const readyWorkers = new Set<WorkerId>()
       const pendingHostMessages = new Map<WorkerId, typeof Message.Type[]>()
       const pendingHookDispatches = new Map<
@@ -276,6 +329,23 @@ export class Engine extends Effect.Service<Engine>()(
         Effect.forever,
         Effect.forkScoped
       )
+
+      yield* Queue.take(workerLifecycleSubscription).pipe(
+        Effect.flatMap((event) => handleWorkerLifecycleEvent(event)),
+        Effect.forever,
+        Effect.forkScoped
+      )
+
+      function handleWorkerLifecycleEvent(event: WorkerLifecycleEvent) {
+        return Effect.sync(() => {
+          if (event._tag === 'WorkerStarted') {
+            return
+          }
+
+          readyWorkers.delete(event.workerId)
+          pendingHostMessages.delete(event.workerId)
+        })
+      }
 
       function dispatchOnInstall(
         workerId: WorkerId,
@@ -585,40 +655,70 @@ export class Engine extends Effect.Service<Engine>()(
       function start() {
         return Effect.gen(function* () {
           const plugins = yield* pluginRegistry.getInstalledPlugins()
+          const disabledPluginIds = yield* pluginRegistry.getDisabledPluginIds()
+          const enabledPlugins = plugins.filter((plugin) =>
+            !disabledPluginIds.includes(plugin.id)
+          )
 
           yield* Effect.forEach(
-            plugins,
-            (plugin) =>
-              supervisor.getByPluginId(plugin.id).pipe(
-                Effect.flatMap((handle) => {
-                  if (Option.isSome(handle)) {
-                    return Effect.void
-                  }
-
-                  return supervisor.start({
-                    pluginManifest: plugin,
-                    grantedRuntimePermissions: plugin
-                      .grantedRuntimePermissions as RuntimePermission[],
-                    workerMessages,
-                    workerLifecycleEvents
-                  }).pipe(
-                    Effect.flatMap(
-                      (process) => dispatchOnStart(process.id, plugin)
-                    )
-                  )
-                })
-              ),
+            enabledPlugins,
+            (plugin) => startPlugin(plugin),
             {
               concurrency: 'unbounded',
               discard: true
             }
           )
+
+          yield* Ref.set(engineStarted, true)
         })
       }
 
       function install(plugin: InstallPlugin) {
         return Effect.gen(function* () {
           yield* pluginRegistry.installPlugin(plugin)
+
+          yield* Effect.gen(function* () {
+            const process = yield* supervisor.start({
+              pluginManifest: plugin,
+              grantedRuntimePermissions: plugin
+                .grantedRuntimePermissions as RuntimePermission[],
+              workerLifecycleEvents,
+              workerMessages
+            })
+
+            yield* dispatchOnInstall(process.id, plugin).pipe(
+              Effect.ensuring(supervisor.interrupt(process.id))
+            )
+
+            const isStarted = yield* Ref.get(engineStarted)
+
+            if (isStarted) {
+              yield* startPlugin(plugin)
+            }
+          }).pipe(
+            Effect.catchAll((error) =>
+              pluginRegistry.uninstallPlugin(plugin.id).pipe(
+                Effect.catchAll(() => Effect.void),
+                Effect.flatMap(() => Effect.fail(error))
+              )
+            )
+          )
+        })
+      }
+
+      function startPlugin(plugin: InstallPlugin) {
+        return Effect.gen(function* () {
+          const handle = yield* supervisor.getByPluginId(plugin.id)
+
+          if (Option.isSome(handle)) {
+            const status = yield* Ref.get(handle.value.status)
+
+            if (status._tag === 'Running') {
+              return false
+            }
+
+            yield* stopPluginWorker(plugin.id)
+          }
 
           const process = yield* supervisor.start({
             pluginManifest: plugin,
@@ -627,9 +727,32 @@ export class Engine extends Effect.Service<Engine>()(
             workerLifecycleEvents,
             workerMessages
           })
-          yield* dispatchOnInstall(process.id, plugin).pipe(
-            Effect.ensuring(supervisor.interrupt(process.id))
+
+          yield* dispatchOnStart(process.id, plugin).pipe(
+            Effect.catchAll((error) =>
+              supervisor.interrupt(process.id).pipe(
+                Effect.flatMap(() => Effect.fail(error))
+              )
+            )
           )
+
+          return true
+        })
+      }
+
+      function stopPluginWorker(pluginId: string) {
+        return Effect.gen(function* () {
+          const handle = yield* supervisor.getByPluginId(pluginId)
+
+          if (Option.isNone(handle)) {
+            return false
+          }
+
+          readyWorkers.delete(handle.value.id)
+          pendingHostMessages.delete(handle.value.id)
+          yield* supervisor.interrupt(handle.value.id)
+
+          return true
         })
       }
 
@@ -641,21 +764,148 @@ export class Engine extends Effect.Service<Engine>()(
             return false
           }
 
-          readyWorkers.delete(handle.value.id)
-          pendingHostMessages.delete(handle.value.id)
-          yield* supervisor.interrupt(handle.value.id)
+          const status = yield* Ref.get(handle.value.status)
 
-          const process = yield* supervisor.start({
-            pluginManifest: plugin,
-            grantedRuntimePermissions: plugin
-              .grantedRuntimePermissions as RuntimePermission[],
-            workerLifecycleEvents,
-            workerMessages
-          })
+          if (status._tag !== 'Running') {
+            return false
+          }
 
-          yield* dispatchOnStart(process.id, plugin)
+          yield* stopPluginWorker(plugin.id)
+          return yield* startPlugin(plugin)
+        })
+      }
 
-          return true
+      function getPluginStatus(pluginId: string) {
+        return Effect.gen(function* () {
+          const plugin = yield* pluginRegistry.getInstalledPlugin(pluginId)
+
+          return yield* getStatusForPlugin(plugin)
+        })
+      }
+
+      function getPluginStatuses() {
+        return Effect.gen(function* () {
+          const plugins = yield* pluginRegistry.getInstalledPlugins()
+
+          return yield* Effect.forEach(
+            plugins,
+            (plugin) => getStatusForPlugin(plugin)
+          )
+        })
+      }
+
+      function getStatusForPlugin(plugin: InstallPlugin) {
+        return Effect.gen(function* () {
+          const disabled = yield* pluginRegistry.isPluginDisabled(plugin.id)
+
+          if (disabled) {
+            return {
+              state: 'disabled',
+              plugin
+            } satisfies PluginStatus
+          }
+
+          const handle = yield* supervisor.getByPluginId(plugin.id)
+
+          if (Option.isNone(handle)) {
+            return {
+              state: 'stopped',
+              plugin
+            } satisfies PluginStatus
+          }
+
+          const status = yield* Ref.get(handle.value.status)
+
+          switch (status._tag) {
+            case 'Running':
+              return {
+                state: readyWorkers.has(handle.value.id)
+                  ? 'running'
+                  : 'starting',
+                plugin,
+                workerId: handle.value.id
+              } satisfies PluginStatus
+            case 'Crashed':
+              return {
+                state: 'crashed',
+                plugin,
+                workerId: handle.value.id,
+                error: serializeError(status.error),
+                restartCount: status.restartCount
+              } satisfies PluginStatus
+            case 'Interrupted':
+            case 'Terminated':
+              return {
+                state: 'stopped',
+                plugin
+              } satisfies PluginStatus
+          }
+        })
+      }
+
+      function disablePlugin(pluginId: string) {
+        return Effect.gen(function* () {
+          const result = yield* pluginRegistry.disablePlugin(pluginId)
+          const stopped = yield* stopPluginWorker(pluginId)
+
+          return {
+            ...result,
+            stopped
+          }
+        })
+      }
+
+      function enablePlugin(pluginId: string) {
+        return Effect.gen(function* () {
+          const result = yield* pluginRegistry.enablePlugin(pluginId)
+          const isStarted = yield* Ref.get(engineStarted)
+          let started = false
+
+          if (result.changed && isStarted) {
+            started = yield* startPlugin(result.plugin)
+          }
+
+          return {
+            ...result,
+            started
+          }
+        })
+      }
+
+      function uninstallPlugin(pluginId: string) {
+        return Effect.gen(function* () {
+          const result = yield* pluginRegistry.uninstallPlugin(pluginId)
+          const stopped = yield* stopPluginWorker(pluginId)
+
+          return {
+            plugin: result.plugin,
+            stopped
+          }
+        })
+      }
+
+      function updatePlugin(plugin: InstallPlugin) {
+        return Effect.gen(function* () {
+          const disabled = yield* pluginRegistry.isPluginDisabled(plugin.id)
+          const handle = yield* supervisor.getByPluginId(plugin.id)
+          const wasRunning = Option.isSome(handle) &&
+            (yield* Ref.get(handle.value.status))._tag === 'Running'
+          const result = yield* pluginRegistry.updatePlugin(plugin)
+
+          if (!result.changed || disabled || !wasRunning) {
+            return {
+              ...result,
+              restarted: false
+            }
+          }
+
+          yield* stopPluginWorker(plugin.id)
+          const restarted = yield* startPlugin(result.plugin)
+
+          return {
+            ...result,
+            restarted
+          }
         })
       }
 
@@ -718,6 +968,12 @@ export class Engine extends Effect.Service<Engine>()(
         supervisor,
         pluginRegistry,
         install,
+        getPluginStatus,
+        getPluginStatuses,
+        disablePlugin,
+        enablePlugin,
+        uninstallPlugin,
+        updatePlugin,
         grantHostPermission,
         revokeHostPermission,
         grantRuntimePermission,
@@ -813,6 +1069,12 @@ type AsyncStorageImpl = {
 export type EngineInstance<H extends Host<any> = Host<any>> = {
   start: () => Promise<void>
   install: (plugin: InstallPlugin) => Promise<void>
+  getPluginStatus: (pluginId: string) => Promise<PluginStatus>
+  getPluginStatuses: () => Promise<PluginStatus[]>
+  disablePlugin: (pluginId: string) => Promise<PluginDisableUpdate>
+  enablePlugin: (pluginId: string) => Promise<PluginEnableUpdate>
+  uninstallPlugin: (pluginId: string) => Promise<PluginUninstallUpdate>
+  updatePlugin: (plugin: InstallPlugin) => Promise<PluginUpdateResult>
   grantHostPermission: (
     pluginId: string,
     permission: Permission | string
@@ -836,6 +1098,45 @@ export type EngineInstance<H extends Host<any> = Host<any>> = {
 
 export type RuntimePermissionUpdate = PluginPermissionUpdate & {
   restarted: boolean
+}
+
+export type PluginDisableUpdate = PluginPermissionUpdate & {
+  stopped: boolean
+}
+
+export type PluginEnableUpdate = PluginPermissionUpdate & {
+  started: boolean
+}
+
+export type PluginUninstallUpdate = {
+  plugin: InstallPlugin
+  stopped: boolean
+}
+
+export type PluginUpdateResult = PluginReplacementUpdate & {
+  restarted: boolean
+}
+
+export type PluginStatus = {
+  state: 'stopped'
+  plugin: InstallPlugin
+} | {
+  state: 'disabled'
+  plugin: InstallPlugin
+} | {
+  state: 'starting'
+  plugin: InstallPlugin
+  workerId: WorkerId
+} | {
+  state: 'running'
+  plugin: InstallPlugin
+  workerId: WorkerId
+} | {
+  state: 'crashed'
+  plugin: InstallPlugin
+  workerId: WorkerId
+  error: SerializedError
+  restartCount: number
 }
 
 export type EngineOptions<H extends Host<any>> = {

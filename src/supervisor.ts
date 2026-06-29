@@ -21,6 +21,8 @@ import {
 import { type Message, parseMessage, WorkerMessage } from './protocol.ts'
 import { WorkerId } from './workerId.ts'
 
+const maxWorkerRestarts = 5
+
 export class WorkerCrashedError extends Data.TaggedError('WorkerCrashedError')<{
   workerId: WorkerId
   event: ErrorEvent
@@ -255,7 +257,7 @@ function superviseWorker(
     Scope.extend(scope),
     Effect.retry(
       Schedule.exponential('100 millis').pipe(
-        Schedule.intersect(Schedule.recurs(5))
+        Schedule.intersect(Schedule.recurs(maxWorkerRestarts))
       )
     ),
     Effect.onExit(
@@ -286,9 +288,11 @@ function superviseWorker(
               }
             )
           } else {
+            const error = Cause.squash(exit.cause)
             yield* Ref.set(status, {
               _tag: 'Crashed',
-              error: Cause.squash(exit.cause)
+              error,
+              restartCount: maxWorkerRestarts
             })
             yield* PubSub.publish(
               workerLifecycleEvents,
@@ -296,7 +300,17 @@ function superviseWorker(
                 _tag: 'WorkerCrashed',
                 pluginManifest,
                 workerId: id,
-                error: Cause.squash(exit.cause)
+                error
+              }
+            )
+            yield* PubSub.publish(
+              workerLifecycleEvents,
+              {
+                _tag: 'WorkerRestartExhausted',
+                pluginManifest,
+                workerId: id,
+                error,
+                restartCount: maxWorkerRestarts
               }
             )
           }
@@ -468,6 +482,7 @@ type WorkerStatus = {
 } | {
   _tag: 'Crashed'
   error: unknown
+  restartCount: number
 }
 
 type WorkerHandle = {
@@ -496,4 +511,10 @@ export type WorkerLifecycleEvent = {
   pluginManifest: PluginMetadata
   workerId: WorkerId
   error: unknown
+} | {
+  _tag: 'WorkerRestartExhausted'
+  pluginManifest: PluginMetadata
+  workerId: WorkerId
+  error: unknown
+  restartCount: number
 }

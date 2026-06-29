@@ -12,32 +12,46 @@ import type {
 import { getRpcHookPhase } from './hook.ts'
 import { $validate } from './validation.ts'
 
-export class InvalidInputError extends Data.TaggedError('InvalidInputError')<{
+const InvalidInputErrorBase = Data.TaggedError('InvalidInputError')<{
   issues: readonly StandardSchemaV1.Issue[]
-}> {}
+}>
 
-export class InvalidInputUnknownError
-  extends Data.TaggedError('InvalidInputUnknownError')<{
-    cause: unknown
-  }> {}
+export class InvalidInputError extends InvalidInputErrorBase {}
 
-export class InvalidOutputError extends Data.TaggedError('InvalidOutputError')<{
-  issues: readonly StandardSchemaV1.Issue[]
-}> {}
-
-export class InvalidOutputUnknownError
-  extends Data.TaggedError('InvalidOutputUnknownError')<{
-    cause: unknown
-  }> {}
-
-export class HandlerError extends Data.TaggedError('HandlerError')<{
+const InvalidInputUnknownErrorBase = Data.TaggedError(
+  'InvalidInputUnknownError'
+)<{
   cause: unknown
-}> {}
+}>
 
-export class RpcHookError extends Data.TaggedError('RpcHookError')<{
+export class InvalidInputUnknownError extends InvalidInputUnknownErrorBase {}
+
+const InvalidOutputErrorBase = Data.TaggedError('InvalidOutputError')<{
+  issues: readonly StandardSchemaV1.Issue[]
+}>
+
+export class InvalidOutputError extends InvalidOutputErrorBase {}
+
+const InvalidOutputUnknownErrorBase = Data.TaggedError(
+  'InvalidOutputUnknownError'
+)<{
+  cause: unknown
+}>
+
+export class InvalidOutputUnknownError extends InvalidOutputUnknownErrorBase {}
+
+const HandlerErrorBase = Data.TaggedError('HandlerError')<{
+  cause: unknown
+}>
+
+export class HandlerError extends HandlerErrorBase {}
+
+const RpcHookErrorBase = Data.TaggedError('RpcHookError')<{
   phase: RpcHookPhase
   cause: unknown
-}> {}
+}>
+
+export class RpcHookError extends RpcHookErrorBase {}
 
 export function $call<
   Input extends StandardSchemaV1,

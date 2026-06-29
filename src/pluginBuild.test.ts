@@ -5,9 +5,10 @@ import { analyzePluginSource, buildPluginPackage } from './pluginBuild.ts'
 Deno.test('analyzePluginSource extracts metadata from plugin source', async () => {
   const source = `
     import { net, on, plugin } from 'weaver'
+    import type { myHost } from './host.ts'
     import { taskPermission, afterCreateTask } from './api.ts'
 
-    const myPlugin = plugin<any>({
+    const myPlugin = plugin<typeof myHost>({
       id: 'my-plugin',
       name: 'My Plugin',
       version: '1.0.0',
@@ -23,6 +24,7 @@ Deno.test('analyzePluginSource extracts metadata from plugin source', async () =
 
   try {
     const apiPath = `${tempDir}/api.ts`
+    const hostPath = `${tempDir}/host.ts`
     const pluginPath = `${tempDir}/plugin.ts`
     await Deno.writeTextFile(
       apiPath,
@@ -38,7 +40,13 @@ Deno.test('analyzePluginSource extracts metadata from plugin source', async () =
         key: 'afterCreateTask',
         payload: undefined as any,
         description: 'Emitted after a task is created'
-      })
+        })
+      `
+    )
+    await Deno.writeTextFile(
+      hostPath,
+      `
+      export const myHost = {}
     `
     )
     await Deno.writeTextFile(pluginPath, source)
@@ -107,12 +115,26 @@ Deno.test('buildPluginPackage emits one bundled package file and metadata JSON',
     `
     )
     await Deno.writeTextFile(
+      `${tempDir}/host.ts`,
+      `
+      import { host } from 'weaver'
+
+      export const myHost = host({
+        name: 'Test Host',
+        version: '1.0.0',
+        rpc: {},
+        permissions: []
+      })
+    `
+    )
+    await Deno.writeTextFile(
       `${tempDir}/plugin.ts`,
       `
       import { on, plugin } from 'weaver'
+      import type { myHost } from './host.ts'
       import { afterCreateTask, taskPermission } from './api.ts'
 
-      const myPlugin = plugin<any>({
+      const myPlugin = plugin<typeof myHost>({
         id: 'my-plugin',
         name: 'My Plugin',
         version: '1.0.0',
@@ -149,6 +171,7 @@ Deno.test('buildPluginPackage emits one bundled package file and metadata JSON',
     })
     assertStringIncludes(bundledSource, 'runPlugin(myPlugin)')
     assertStringIncludes(bundledSource, '__zod_globalRegistry')
+    assert(!bundledSource.includes('Test Host'))
     assert(!bundledSource.includes(`from './api.ts'`))
     assert(!bundledSource.includes(`from 'zod'`))
   } finally {

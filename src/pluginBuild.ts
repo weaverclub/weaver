@@ -130,67 +130,99 @@ function bundlePluginSource(
 
 function collectPermissionKeys(
   sourceFile: ts.SourceFile,
-  visited = new Set<string>()
+  context: PermissionKeyCollectionContext = {
+    cache: new Map(),
+    visiting: new Set()
+  }
 ): Effect.Effect<Map<string, string>, PluginBuildError> {
   return Effect.gen(function* () {
     const resolvedPath = yield* realPath(sourceFile.fileName)
+    const cached = context.cache.get(resolvedPath)
 
-    if (visited.has(resolvedPath)) {
+    if (cached !== undefined) {
+      return new Map(cached)
+    }
+
+    if (context.visiting.has(resolvedPath)) {
       return new Map()
     }
 
-    visited.add(resolvedPath)
+    context.visiting.add(resolvedPath)
 
-    const keys = yield* Effect.try({
-      try: () => collectLocalPermissionKeys(sourceFile),
-      catch: toPluginBuildError
-    })
-
-    for (const statement of sourceFile.statements) {
-      if (!ts.isImportDeclaration(statement)) {
-        continue
-      }
-
-      const moduleSpecifier = statement.moduleSpecifier
-      const importClause = statement.importClause
-
-      if (
-        !ts.isStringLiteral(moduleSpecifier) ||
-        !moduleSpecifier.text.startsWith('.') ||
-        importClause?.namedBindings === undefined ||
-        !ts.isNamedImports(importClause.namedBindings)
-      ) {
-        continue
-      }
-
-      const importedPath = yield* Effect.try({
-        try: () => resolveModulePath(sourceFile.fileName, moduleSpecifier.text),
+    return yield* Effect.gen(function* () {
+      const keys = yield* Effect.try({
+        try: () => collectLocalPermissionKeys(sourceFile),
         catch: toPluginBuildError
       })
-      const importedText = yield* readTextFile(importedPath).pipe(
-        Effect.catchAll(() => Effect.succeed(undefined))
-      )
 
-      if (importedText === undefined) {
-        continue
-      }
+      for (const statement of sourceFile.statements) {
+        if (!ts.isImportDeclaration(statement)) {
+          continue
+        }
 
-      const importedFile = createSourceFile(importedPath, importedText)
-      const importedKeys = yield* collectPermissionKeys(importedFile, visited)
+        const moduleSpecifier = statement.moduleSpecifier
+        const importClause = statement.importClause
 
-      for (const element of importClause.namedBindings.elements) {
-        const importedName = element.propertyName?.text ?? element.name.text
-        const localName = element.name.text
-        const key = importedKeys.get(importedName)
+        if (
+          !ts.isStringLiteral(moduleSpecifier) ||
+          !moduleSpecifier.text.startsWith('.') ||
+          importClause?.isTypeOnly ||
+          importClause?.namedBindings === undefined ||
+          !ts.isNamedImports(importClause.namedBindings)
+        ) {
+          continue
+        }
 
-        if (key !== undefined) {
-          keys.set(localName, key)
+        const importedPath = yield* Effect.try({
+          try: () =>
+            resolveModulePath(sourceFile.fileName, moduleSpecifier.text),
+          catch: toPluginBuildError
+        })
+        const importedText = yield* readTextFile(importedPath).pipe(
+          Effect.catchAll(() => Effect.succeed(undefined))
+        )
+
+        if (importedText === undefined) {
+          continue
+        }
+
+        const importedFile = createSourceFile(importedPath, importedText)
+        const importedKeys = yield* collectPermissionKeys(
+          importedFile,
+          context
+        )
+
+        for (const element of importClause.namedBindings.elements) {
+          if (element.isTypeOnly) {
+            continue
+          }
+
+          const importedName = element.propertyName?.text ?? element.name.text
+          const localName = element.name.text
+          const key = importedKeys.get(importedName)
+
+          if (key !== undefined) {
+            keys.set(localName, key)
+          }
         }
       }
-    }
 
-    return keys
+      context.cache.set(resolvedPath, new Map(keys))
+
+      return keys
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          context.visiting.delete(resolvedPath)
+        })
+      )
+    )
   })
+}
+
+type PermissionKeyCollectionContext = {
+  cache: Map<string, Map<string, string>>
+  visiting: Set<string>
 }
 
 function collectLocalPermissionKeys(sourceFile: ts.SourceFile) {

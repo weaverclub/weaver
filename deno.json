@@ -1,7 +1,8 @@
 {
-  "name": "weaver",
+  "name": "@weaverclub/toolkit",
   "description": "Toolkit for the next generation of extensible applications",
   "version": "0.0.0",
+  "license": "MIT",
   "tasks": {
     "cli": "deno run --allow-all src/cli.ts",
     "example:basic:build": "deno task cli build examples/01-basic-plugin/src/plugin.ts --out-dir examples/01-basic-plugin/dist --config examples/01-basic-plugin/deno.json",
@@ -13,6 +14,18 @@
   "exports": {
     ".": "./mod.ts",
     "./cli": "./src/cli.ts"
+  },
+  "publish": {
+    "include": [
+      "deno.json",
+      "deno.lock",
+      "mod.ts",
+      "package.json",
+      "src/**/*.ts"
+    ],
+    "exclude": [
+      "src/**/*.test.ts"
+    ]
   },
   "imports": {
     "@ark/attest": "npm:@ark/attest@0.56.0",

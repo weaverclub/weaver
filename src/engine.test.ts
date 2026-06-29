@@ -258,7 +258,7 @@ Deno.test('engine install interrupts the worker after onInstall', async () => {
 })
 
 Deno.test('engine install fails when onInstall hook fails and still interrupts worker', async () => {
-  const { layer } = ephemeralStorage()
+  const { store, layer } = ephemeralStorage()
 
   const failingInstallPlugin = {
     ...PluginManifest.make({
@@ -284,6 +284,8 @@ Deno.test('engine install fails when onInstall hook fails and still interrupts w
     assert(Exit.isFailure(exit))
     assertEquals(count.value, 1)
   })
+
+  assertEquals(store.get(PluginRegistry.CONSTANTS.InstalledPlugins), [])
 })
 
 Deno.test('engine install times out when plugin runtime never becomes ready', async () => {
@@ -454,7 +456,7 @@ Deno.test('engine start dispatches onStart for plugins installed after engine in
   })
 })
 
-Deno.test('engine start then install dispatches onStart and onInstall', async () => {
+Deno.test('engine start then install dispatches onInstall and starts the new plugin', async () => {
   const { store, layer } = ephemeralStorage()
   store.set(PluginRegistry.CONSTANTS.InstalledPlugins, [installTestPlugin])
 
@@ -472,11 +474,10 @@ Deno.test('engine start then install dispatches onStart and onInstall', async ()
       messages,
       PluginRegistry.CONSTANTS.OnStart
     )
-    assertEquals(onStartMessages.length, 1)
-    assertEquals(
-      (onStartMessages[0] as any).payload.payload.id,
-      installTestPlugin.id
-    )
+    assertEquals(onStartMessages.length, 2)
+    const onStartIds = onStartMessages.map((m: any) => m.payload.payload.id)
+      .sort()
+    assertEquals(onStartIds, ['install-test', 'install-test-2'])
 
     const onInstallMessages = hookDispatchMessages(
       messages,
@@ -487,6 +488,175 @@ Deno.test('engine start then install dispatches onStart and onInstall', async ()
       (onInstallMessages[0] as any).payload.payload.id,
       installTestPlugin2.id
     )
+  })
+})
+
+Deno.test('engine start skips disabled plugins and reports disabled status', async () => {
+  const { store, layer } = ephemeralStorage()
+  store.set(PluginRegistry.CONSTANTS.InstalledPlugins, [
+    installTestPlugin,
+    installTestPlugin2
+  ])
+  store.set(PluginRegistry.CONSTANTS.DisabledPlugins, [installTestPlugin2.id])
+
+  const effect = Effect.gen(function* () {
+    const engine = yield* Engine
+    yield* engine.start()
+
+    const disabledStatus = yield* engine.getPluginStatus(
+      installTestPlugin2.id
+    )
+    assertEquals(disabledStatus.state, 'disabled')
+  })
+
+  await withPostMessageSpy(async (messages) => {
+    const exit = await runEngine(Effect.scoped(effect), layer)
+    assert(Exit.isSuccess(exit))
+
+    const onStartMessages = hookDispatchMessages(
+      messages,
+      PluginRegistry.CONSTANTS.OnStart
+    )
+    assertEquals(onStartMessages.length, 1)
+    assertEquals(
+      (onStartMessages[0] as any).payload.payload.id,
+      installTestPlugin.id
+    )
+  })
+})
+
+Deno.test('engine disablePlugin persists disabled status and stops running worker', async () => {
+  const { store, layer } = ephemeralStorage()
+  store.set(PluginRegistry.CONSTANTS.InstalledPlugins, [installTestPlugin])
+
+  const effect = Effect.gen(function* () {
+    const engine = yield* Engine
+    yield* engine.start()
+
+    const result = yield* engine.disablePlugin(installTestPlugin.id)
+    const status = yield* engine.getPluginStatus(installTestPlugin.id)
+    const handle = yield* engine.supervisor.getByPluginId(installTestPlugin.id)
+
+    assertEquals(result.changed, true)
+    assertEquals(result.stopped, true)
+    assertEquals(status.state, 'disabled')
+    assert(handle._tag === 'None')
+  })
+
+  await withTerminateSpy(async (count) => {
+    const exit = await runEngine(Effect.scoped(effect), layer)
+    assert(Exit.isSuccess(exit))
+    assertEquals(count.value, 1)
+  })
+
+  assertEquals(store.get(PluginRegistry.CONSTANTS.DisabledPlugins), [
+    installTestPlugin.id
+  ])
+})
+
+Deno.test('engine enablePlugin starts disabled plugin when engine is running', async () => {
+  const { store, layer } = ephemeralStorage()
+  store.set(PluginRegistry.CONSTANTS.InstalledPlugins, [installTestPlugin])
+  store.set(PluginRegistry.CONSTANTS.DisabledPlugins, [installTestPlugin.id])
+
+  const effect = Effect.gen(function* () {
+    const engine = yield* Engine
+    yield* engine.start()
+
+    const result = yield* engine.enablePlugin(installTestPlugin.id)
+    const status = yield* engine.getPluginStatus(installTestPlugin.id)
+
+    assertEquals(result.changed, true)
+    assertEquals(result.started, true)
+    assertEquals(status.state, 'running')
+  })
+
+  await withPostMessageSpy(async (messages) => {
+    const exit = await runEngine(Effect.scoped(effect), layer)
+    assert(Exit.isSuccess(exit))
+
+    const onStartMessages = hookDispatchMessages(
+      messages,
+      PluginRegistry.CONSTANTS.OnStart
+    )
+    assertEquals(onStartMessages.length, 1)
+    assertEquals(
+      (onStartMessages[0] as any).payload.payload.id,
+      installTestPlugin.id
+    )
+  })
+
+  assertEquals(store.get(PluginRegistry.CONSTANTS.DisabledPlugins), [])
+})
+
+Deno.test('engine uninstallPlugin removes plugin and stops running worker', async () => {
+  const { store, layer } = ephemeralStorage()
+  store.set(PluginRegistry.CONSTANTS.InstalledPlugins, [installTestPlugin])
+
+  const effect = Effect.gen(function* () {
+    const engine = yield* Engine
+    yield* engine.start()
+
+    const result = yield* engine.uninstallPlugin(installTestPlugin.id)
+    const plugins = yield* engine.pluginRegistry.getInstalledPlugins()
+    const handle = yield* engine.supervisor.getByPluginId(installTestPlugin.id)
+
+    assertEquals(result.plugin.id, installTestPlugin.id)
+    assertEquals(result.stopped, true)
+    assertEquals(plugins, [])
+    assert(handle._tag === 'None')
+  })
+
+  await withTerminateSpy(async (count) => {
+    const exit = await runEngine(Effect.scoped(effect), layer)
+    assert(Exit.isSuccess(exit))
+    assertEquals(count.value, 1)
+  })
+
+  assertEquals(store.get(PluginRegistry.CONSTANTS.InstalledPlugins), [])
+})
+
+Deno.test('engine updatePlugin restarts running plugin with updated metadata', async () => {
+  const { store, layer } = ephemeralStorage()
+  const updatedPlugin = {
+    ...installTestPlugin,
+    name: 'Updated Install Test Plugin',
+    version: '2.0.0'
+  }
+  store.set(PluginRegistry.CONSTANTS.InstalledPlugins, [installTestPlugin])
+
+  const effect = Effect.gen(function* () {
+    const engine = yield* Engine
+    yield* engine.start()
+
+    const firstHandle = yield* engine.supervisor.getByPluginId(
+      installTestPlugin.id
+    )
+    assert(firstHandle._tag === 'Some')
+
+    const result = yield* engine.updatePlugin(updatedPlugin)
+    const secondHandle = yield* engine.supervisor.getByPluginId(
+      installTestPlugin.id
+    )
+    const status = yield* engine.getPluginStatus(installTestPlugin.id)
+    const plugins = yield* engine.pluginRegistry.getInstalledPlugins()
+
+    assert(secondHandle._tag === 'Some')
+    assertEquals(result.changed, true)
+    assertEquals(result.restarted, true)
+    assertEquals(result.previousPlugin.version, '1.0.0')
+    assertEquals(result.plugin.version, '2.0.0')
+    assert(secondHandle.value.id !== firstHandle.value.id)
+    assertEquals(status.state, 'running')
+    assertEquals(plugins[0].version, '2.0.0')
+
+    yield* engine.supervisor.interrupt(secondHandle.value.id)
+  })
+
+  await withTerminateSpy(async (count) => {
+    const exit = await runEngine(Effect.scoped(effect), layer)
+    assert(Exit.isSuccess(exit))
+    assertEquals(count.value, 2)
   })
 })
 

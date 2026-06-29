@@ -1,9 +1,12 @@
 import { Data, Effect } from 'effect'
 
-export class PermissionsRequiredError
-  extends Data.TaggedError('PermissionsRequiredError')<{
-    missingPermissions: Permission[]
-  }> {}
+const PermissionsRequiredErrorBase = Data.TaggedError(
+  'PermissionsRequiredError'
+)<{
+  missingPermissions: Permission[]
+}>
+
+export class PermissionsRequiredError extends PermissionsRequiredErrorBase {}
 
 /**
  * Defines a permission that a plugin can request from the host. Permissions are

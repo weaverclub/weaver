@@ -266,6 +266,80 @@ Deno.test('pluginRegistry revokeRuntimePermission persists Deno permission revok
   assert(Exit.isSuccess(exit))
 })
 
+Deno.test('pluginRegistry disablePlugin and enablePlugin persist disabled plugin ids', async () => {
+  const { store, layer } = ephemeralStorage()
+
+  const effect = Effect.gen(function* () {
+    const registry = yield* PluginRegistry
+    yield* registry.installPlugin(registryTestPlugin)
+
+    const disable = yield* registry.disablePlugin(registryTestPlugin.id)
+    const duplicateDisable = yield* registry.disablePlugin(
+      registryTestPlugin.id
+    )
+    const enable = yield* registry.enablePlugin(registryTestPlugin.id)
+    const duplicateEnable = yield* registry.enablePlugin(registryTestPlugin.id)
+
+    assertEquals(disable.changed, true)
+    assertEquals(duplicateDisable.changed, false)
+    assertEquals(enable.changed, true)
+    assertEquals(duplicateEnable.changed, false)
+  })
+
+  const exit = await runRegistry(effect, layer)
+  assert(Exit.isSuccess(exit))
+
+  assertEquals(store.get(PluginRegistry.CONSTANTS.DisabledPlugins), [])
+})
+
+Deno.test('pluginRegistry uninstallPlugin removes plugin and disabled state', async () => {
+  const { store, layer } = ephemeralStorage()
+
+  const effect = Effect.gen(function* () {
+    const registry = yield* PluginRegistry
+    yield* registry.installPlugin(registryTestPlugin)
+    yield* registry.disablePlugin(registryTestPlugin.id)
+
+    const result = yield* registry.uninstallPlugin(registryTestPlugin.id)
+
+    assertEquals(result.plugin.id, registryTestPlugin.id)
+    assertEquals(result.changed, true)
+  })
+
+  const exit = await runRegistry(effect, layer)
+  assert(Exit.isSuccess(exit))
+
+  assertEquals(store.get(PluginRegistry.CONSTANTS.InstalledPlugins), [])
+  assertEquals(store.get(PluginRegistry.CONSTANTS.DisabledPlugins), [])
+})
+
+Deno.test('pluginRegistry updatePlugin replaces installed plugin metadata', async () => {
+  const { layer } = ephemeralStorage()
+  const updatedPlugin = {
+    ...registryTestPlugin,
+    name: 'Updated Registry Test Plugin',
+    version: '2.0.0'
+  }
+
+  const effect = Effect.gen(function* () {
+    const registry = yield* PluginRegistry
+    yield* registry.installPlugin(registryTestPlugin)
+
+    const result = yield* registry.updatePlugin(updatedPlugin)
+    const duplicateUpdate = yield* registry.updatePlugin(updatedPlugin)
+    const plugins = yield* registry.getInstalledPlugins()
+
+    assertEquals(result.changed, true)
+    assertEquals(result.previousPlugin.version, '1.0.0')
+    assertEquals(result.plugin.version, '2.0.0')
+    assertEquals(duplicateUpdate.changed, false)
+    assertEquals(plugins[0].name, 'Updated Registry Test Plugin')
+  })
+
+  const exit = await runRegistry(effect, layer)
+  assert(Exit.isSuccess(exit))
+})
+
 Deno.test('pluginRegistry getInstalledPlugins fails with corrupted storage data', async () => {
   const { store, layer } = ephemeralStorage()
   store.set(PluginRegistry.CONSTANTS.InstalledPlugins, 'invalid-data')
