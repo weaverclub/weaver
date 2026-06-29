@@ -1,11 +1,17 @@
 import { Data, Effect, Schema } from 'effect'
 import { Storage } from './storage.ts'
 import { InstalledPlugin, type InstallPlugin } from './plugin.ts'
+import { type Permission, permissionKey } from './permission.ts'
+import {
+  type RuntimePermission,
+  runtimePermissionKey
+} from './runtimePermission.ts'
+import { LifecycleEvent } from './protocol.ts'
 
 const CONSTANTS = {
   'InstalledPlugins': '__weaver_installed_plugins__',
-  'OnInstall': '__weaver_lifecycle_on_install__',
-  'OnStart': '__weaver_lifecycle_on_start__'
+  'OnInstall': LifecycleEvent.OnInstall,
+  'OnStart': LifecycleEvent.OnStart
 }
 
 const parseInstalledPluginsArray = Schema.decodeUnknown(
@@ -14,6 +20,11 @@ const parseInstalledPluginsArray = Schema.decodeUnknown(
 
 export class PluginAlreadyInstalledError
   extends Data.TaggedError('PluginAlreadyInstalledError')<{
+    pluginId: string
+  }> {}
+
+export class PluginNotInstalledError
+  extends Data.TaggedError('PluginNotInstalledError')<{
     pluginId: string
   }> {}
 
@@ -47,6 +58,21 @@ export class PluginRegistry extends Effect.Service<PluginRegistry>()(
         )
       }
 
+      function getInstalledPlugin(pluginId: string) {
+        return Effect.gen(function* () {
+          const installedPlugins = yield* getInstalledPlugins()
+          const plugin = installedPlugins.find((p) => p.id === pluginId)
+
+          if (plugin === undefined) {
+            return yield* new PluginNotInstalledError({
+              pluginId
+            })
+          }
+
+          return plugin
+        })
+      }
+
       function installPlugin(plugin: InstallPlugin) {
         return Effect.gen(function* () {
           const installedPlugins = yield* getInstalledPlugins()
@@ -72,12 +98,168 @@ export class PluginRegistry extends Effect.Service<PluginRegistry>()(
         })
       }
 
+      function updateInstalledPlugin(
+        pluginId: string,
+        update: (plugin: InstallPlugin) => PluginPermissionUpdate
+      ) {
+        return Effect.gen(function* () {
+          const installedPlugins = yield* getInstalledPlugins()
+          const pluginIndex = installedPlugins.findIndex(
+            (p) => p.id === pluginId
+          )
+
+          if (pluginIndex === -1) {
+            return yield* new PluginNotInstalledError({
+              pluginId
+            })
+          }
+
+          const result = update(installedPlugins[pluginIndex])
+
+          if (!result.changed) {
+            return result
+          }
+
+          const rawNewInstalledPlugins = installedPlugins.map((plugin, index) =>
+            index === pluginIndex ? result.plugin : plugin
+          )
+
+          const parsedNewInstalledPlugins = yield* parseInstalledPluginsArray(
+            rawNewInstalledPlugins
+          )
+
+          yield* storage.set(
+            CONSTANTS.InstalledPlugins,
+            parsedNewInstalledPlugins
+          )
+
+          return {
+            plugin: parsedNewInstalledPlugins[pluginIndex],
+            changed: true
+          }
+        })
+      }
+
+      function grantHostPermission(
+        pluginId: string,
+        permission: Permission | string
+      ) {
+        return updateInstalledPlugin(pluginId, (plugin) => {
+          const key = permissionKey(permission)
+
+          if (plugin.grantedHostPermissions.includes(key)) {
+            return { plugin, changed: false }
+          }
+
+          return {
+            plugin: {
+              ...plugin,
+              grantedHostPermissions: [
+                ...plugin.grantedHostPermissions,
+                key
+              ]
+            },
+            changed: true
+          }
+        })
+      }
+
+      function revokeHostPermission(
+        pluginId: string,
+        permission: Permission | string
+      ) {
+        return updateInstalledPlugin(pluginId, (plugin) => {
+          const key = permissionKey(permission)
+
+          if (!plugin.grantedHostPermissions.includes(key)) {
+            return { plugin, changed: false }
+          }
+
+          return {
+            plugin: {
+              ...plugin,
+              grantedHostPermissions: plugin.grantedHostPermissions.filter(
+                (grantedPermission) => grantedPermission !== key
+              )
+            },
+            changed: true
+          }
+        })
+      }
+
+      function grantRuntimePermission(
+        pluginId: string,
+        permission: RuntimePermission
+      ) {
+        return updateInstalledPlugin(pluginId, (plugin) => {
+          const key = runtimePermissionKey(permission)
+          const hasPermission = plugin.grantedRuntimePermissions.some(
+            (grantedPermission) =>
+              runtimePermissionKey(grantedPermission) === key
+          )
+
+          if (hasPermission) {
+            return { plugin, changed: false }
+          }
+
+          return {
+            plugin: {
+              ...plugin,
+              grantedRuntimePermissions: [
+                ...plugin.grantedRuntimePermissions,
+                permission
+              ]
+            },
+            changed: true
+          }
+        })
+      }
+
+      function revokeRuntimePermission(
+        pluginId: string,
+        permission: RuntimePermission
+      ) {
+        return updateInstalledPlugin(pluginId, (plugin) => {
+          const key = runtimePermissionKey(permission)
+          const grantedRuntimePermissions = plugin.grantedRuntimePermissions
+            .filter(
+              (grantedPermission) =>
+                runtimePermissionKey(grantedPermission) !== key
+            )
+
+          if (
+            grantedRuntimePermissions.length ===
+              plugin.grantedRuntimePermissions.length
+          ) {
+            return { plugin, changed: false }
+          }
+
+          return {
+            plugin: {
+              ...plugin,
+              grantedRuntimePermissions
+            },
+            changed: true
+          }
+        })
+      }
+
       return {
         getInstalledPlugins,
-        installPlugin
+        getInstalledPlugin,
+        installPlugin,
+        grantHostPermission,
+        revokeHostPermission,
+        grantRuntimePermission,
+        revokeRuntimePermission
       } as const
     })
   }
 ) {
   static CONSTANTS = CONSTANTS
+}
+
+export type PluginPermissionUpdate = {
+  plugin: InstallPlugin
+  changed: boolean
 }

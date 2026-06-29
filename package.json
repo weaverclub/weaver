@@ -1,5 +1,10 @@
 {
   "name": "weaver",
   "version": "0.0.0",
-  "description": "This package.json serves to provide compatibility with @ark/attest"
+  "description": "This package.json serves to provide compatibility with @ark/attest",
+  "dependencies": {
+    "@effect/cli": "^0.75.2",
+    "@effect/platform-node": "^0.107.0",
+    "effect": "3.21.4"
+  }
 }

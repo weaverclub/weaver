@@ -3,17 +3,26 @@
   "description": "Toolkit for the next generation of extensible applications",
   "version": "0.0.0",
   "tasks": {
+    "cli": "deno run --allow-all src/cli.ts",
+    "example:basic:build": "deno task cli build examples/01-basic-plugin/src/plugin.ts --out-dir examples/01-basic-plugin/dist --config examples/01-basic-plugin/deno.json",
+    "example:basic": "deno task example:basic:build && deno run --allow-all --unstable-worker-options --config examples/01-basic-plugin/deno.json examples/01-basic-plugin/src/host.ts",
     "test": "deno test --preload setupTests.ts --parallel --allow-all --unstable-worker-options --coverage",
     "test:windows": "deno test --preload setupTests.ts --allow-all --unstable-worker-options --coverage --unstable",
     "test:windows:debug": "$env:WEAVER_DEBUG='1'; deno task test:windows"
   },
-  "exports": "./mod.ts",
+  "exports": {
+    ".": "./mod.ts",
+    "./cli": "./src/cli.ts"
+  },
   "imports": {
     "@ark/attest": "npm:@ark/attest@0.56.0",
+    "@effect/cli": "npm:@effect/cli@0.75.2",
+    "@effect/platform-node": "npm:@effect/platform-node@0.107.0",
     "@standard-schema/spec": "jsr:@standard-schema/spec@1.1.0",
     "@std/assert": "jsr:@std/assert@1.0.19",
     "@std/semver": "jsr:@std/semver@1.0.8",
-    "effect": "npm:effect@3.21.2",
+    "effect": "npm:effect@3.21.4",
+    "fast-check": "npm:fast-check@3.23.2",
     "typescript": "npm:typescript@6.0.3"
   },
   "fmt": {

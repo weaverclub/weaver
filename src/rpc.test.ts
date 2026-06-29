@@ -284,6 +284,59 @@ Deno.test('$call() with void output returns void', async () => {
   assertEquals(result, undefined)
 })
 
+Deno.test('$call() runs RPC lifecycle hooks', async () => {
+  const input = Schema.standardSchemaV1(Schema.String)
+  const output = Schema.standardSchemaV1(Schema.Number)
+  const calls: string[] = []
+
+  const myRpc = rpc({
+    input,
+    output,
+    handler: (value) => {
+      calls.push(`handler:${value}`)
+      return value.length
+    },
+    hooks: [
+      preExecution((ctx) => {
+        calls.push(`pre:${ctx.input}`)
+      }),
+      postExecution((ctx) => {
+        calls.push(`post:${ctx.output}`)
+      }),
+      postFailure((ctx) => {
+        calls.push(`failure:${String(ctx.error)}`)
+      })
+    ]
+  })
+
+  const result = await Effect.runPromise($call(myRpc, 'weaver'))
+
+  assertEquals(result, 6)
+  assertEquals(calls, ['pre:weaver', 'handler:weaver', 'post:6'])
+})
+
+Deno.test('$call() runs postFailure hooks when handler throws', async () => {
+  const input = Schema.standardSchemaV1(Schema.String)
+  const calls: string[] = []
+
+  const myRpc = rpc({
+    input,
+    handler: () => {
+      throw new Error('boom')
+    },
+    hooks: [
+      postFailure((ctx) => {
+        calls.push((ctx.error as Error).message)
+      })
+    ]
+  })
+
+  const result = await Effect.runPromiseExit($call(myRpc, 'weaver'))
+
+  assert(result._tag === 'Failure')
+  assertEquals(calls, ['boom'])
+})
+
 Deno.test('$call() with invalid input returns InvalidInputError', async () => {
   const input = Schema.standardSchemaV1(Schema.NumberFromString)
   const output = Schema.standardSchemaV1(Schema.String)

@@ -2,6 +2,8 @@ import type { StandardSchemaV1 } from '@standard-schema/spec'
 import type { Event } from './event.ts'
 import type { InferRPC } from './host.ts'
 
+const rpcHookPhaseSymbol = Symbol.for('weaver.rpcHookPhase')
+
 /**
  * The `onInstall` hook is triggered when a plugin is installed in the host.
  * This allows the plugin to perform any necessary setup or initialization tasks
@@ -34,6 +36,117 @@ export function on<
     event: event.key,
     handler
   }
+}
+
+/**
+ * Creates a pre-execution hook. This is an identity function that provides
+ * type inference for the handler's context — pass the handler directly and
+ * the `Input` type is inferred from the RPC's hooks array.
+ *
+ * Place the result in an RPC's `hooks` array alongside other hook types.
+ *
+ * @param handler - The function to run before the RPC executes.
+ * @returns The same function, typed as `PreExecutionHook<Input>`.
+ *
+ * @example
+ * ```ts
+ * const myRpc = rpc({
+ *   input: myInputSchema,
+ *   output: myOutputSchema,
+ *   handler: (input) => { ... },
+ *   hooks: [
+ *     preExecution((ctx) => {
+ *       console.log("input:", ctx.input)
+ *     })
+ *   ]
+ * })
+ * ```
+ */
+export function preExecution<Input>(
+  handler: PreExecutionHook<Input>
+): PreExecutionHook<Input> {
+  return tagRpcHook(handler, 'preExecution')
+}
+
+/**
+ * Creates a post-execution hook. This is an identity function that provides
+ * type inference for the handler's context — pass the handler directly and
+ * the `Input` and `Output` types are inferred from the RPC's hooks array.
+ *
+ * Place the result in an RPC's `hooks` array alongside other hook types.
+ *
+ * @param handler - The function to run after the RPC succeeds.
+ * @returns The same function, typed as `PostExecutionHook<Input, Output>`.
+ *
+ * @example
+ * ```ts
+ * const myRpc = rpc({
+ *   input: myInputSchema,
+ *   output: myOutputSchema,
+ *   handler: (input) => { ... },
+ *   hooks: [
+ *     postExecution((ctx) => {
+ *       console.log("result:", ctx.output)
+ *     })
+ *   ]
+ * })
+ * ```
+ */
+export function postExecution<Input, Output>(
+  handler: PostExecutionHook<Input, Output>
+): PostExecutionHook<Input, Output> {
+  return tagRpcHook(handler, 'postExecution')
+}
+
+/**
+ * Creates a post-failure hook. This is an identity function that provides
+ * type inference for the handler's context — pass the handler directly and
+ * the `Input` type is inferred from the RPC's hooks array.
+ *
+ * Place the result in an RPC's `hooks` array alongside other hook types.
+ *
+ * @param handler - The function to run after the RPC throws.
+ * @returns The same function, typed as `PostFailureHook<Input>`.
+ *
+ * @example
+ * ```ts
+ * const myRpc = rpc({
+ *   input: myInputSchema,
+ *   handler: (input) => { ... },
+ *   hooks: [
+ *     postFailure((ctx) => {
+ *       console.error("error:", ctx.error)
+ *     })
+ *   ]
+ * })
+ * ```
+ */
+export function postFailure<Input>(
+  handler: PostFailureHook<Input>
+): PostFailureHook<Input> {
+  return tagRpcHook(handler, 'postFailure')
+}
+
+export function getRpcHookPhase(
+  hook:
+    | PreExecutionHook<any>
+    | PostExecutionHook<any, any>
+    | PostFailureHook<any>
+): RpcHookPhase | undefined {
+  return (hook as TaggedRpcHook)[rpcHookPhaseSymbol]
+}
+
+function tagRpcHook<Hook extends (...args: any[]) => any>(
+  hook: Hook,
+  phase: RpcHookPhase
+): Hook {
+  Object.defineProperty(hook, rpcHookPhaseSymbol, {
+    configurable: false,
+    enumerable: false,
+    value: phase
+  })
+
+  return hook
 }
 
 export type Hook<
@@ -128,95 +241,6 @@ export type PostFailureHook<Input> = (
   ctx: { emit: EmitFn; input: Input; error: unknown }
 ) => void | Promise<void>
 
-/**
- * Creates a pre-execution hook. This is an identity function that provides
- * type inference for the handler's context — pass the handler directly and
- * the `Input` type is inferred from the RPC's hooks array.
- *
- * Place the result in an RPC's `hooks` array alongside other hook types.
- *
- * @param handler - The function to run before the RPC executes.
- * @returns The same function, typed as `PreExecutionHook<Input>`.
- *
- * @example
- * ```ts
- * const myRpc = rpc({
- *   input: myInputSchema,
- *   output: myOutputSchema,
- *   handler: (input) => { ... },
- *   hooks: [
- *     preExecution((ctx) => {
- *       console.log("input:", ctx.input)
- *     })
- *   ]
- * })
- * ```
- */
-export function preExecution<Input>(
-  handler: PreExecutionHook<Input>
-): PreExecutionHook<Input> {
-  return handler
-}
-
-/**
- * Creates a post-execution hook. This is an identity function that provides
- * type inference for the handler's context — pass the handler directly and
- * the `Input` and `Output` types are inferred from the RPC's hooks array.
- *
- * Place the result in an RPC's `hooks` array alongside other hook types.
- *
- * @param handler - The function to run after the RPC succeeds.
- * @returns The same function, typed as `PostExecutionHook<Input, Output>`.
- *
- * @example
- * ```ts
- * const myRpc = rpc({
- *   input: myInputSchema,
- *   output: myOutputSchema,
- *   handler: (input) => { ... },
- *   hooks: [
- *     postExecution((ctx) => {
- *       console.log("result:", ctx.output)
- *     })
- *   ]
- * })
- * ```
- */
-export function postExecution<Input, Output>(
-  handler: PostExecutionHook<Input, Output>
-): PostExecutionHook<Input, Output> {
-  return handler
-}
-
-/**
- * Creates a post-failure hook. This is an identity function that provides
- * type inference for the handler's context — pass the handler directly and
- * the `Input` type is inferred from the RPC's hooks array.
- *
- * Place the result in an RPC's `hooks` array alongside other hook types.
- *
- * @param handler - The function to run after the RPC throws.
- * @returns The same function, typed as `PostFailureHook<Input>`.
- *
- * @example
- * ```ts
- * const myRpc = rpc({
- *   input: myInputSchema,
- *   handler: (input) => { ... },
- *   hooks: [
- *     postFailure((ctx) => {
- *       console.error("error:", ctx.error)
- *     })
- *   ]
- * })
- * ```
- */
-export function postFailure<Input>(
-  handler: PostFailureHook<Input>
-): PostFailureHook<Input> {
-  return handler
-}
-
 export type Logger = {
   /**
    * Logs an informational message. This can be used for general logging
@@ -257,3 +281,9 @@ export type HandlerHook<
     ? StandardSchemaV1.InferOutput<Payload>
     : never
 }) => void | Promise<void>
+
+export type RpcHookPhase = 'preExecution' | 'postExecution' | 'postFailure'
+
+type TaggedRpcHook = {
+  [rpcHookPhaseSymbol]?: RpcHookPhase
+}

@@ -1,12 +1,13 @@
 import { on, plugin } from 'weaver'
-import { afterCreateTask, manageTasks, type myHost } from './host.ts'
+import { afterCreateTask, manageTasks } from './api.ts'
 
-const myPlugin = plugin<typeof myHost>({
+const _myPlugin = plugin<any>({
   id: 'my-plugin',
   name: 'My Plugin',
   version: '1.0.0',
-  requestPermissions: [manageTasks],
-  supportedVersions: ['1.x'],
+  requestedHostPermissions: [manageTasks],
+  requestedRuntimePermissions: [],
+  supportedHostVersions: ['1.x'],
   hooks: [
     on(afterCreateTask, async (ctx) => {
       const task = await ctx.rpc.getTask({

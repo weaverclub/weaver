@@ -1,5 +1,8 @@
 {
   "imports": {
+    "@standard-schema/spec": "jsr:@standard-schema/spec@1.1.0",
+    "effect": "npm:effect@3.21.4",
+    "fast-check": "npm:fast-check@3.23.2",
     "weaver": "../../mod.ts",
     "zod": "npm:zod@^4.4.3"
   },

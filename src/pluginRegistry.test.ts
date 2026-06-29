@@ -2,6 +2,7 @@ import { Effect, Exit, Layer } from 'effect'
 import { PluginRegistry } from './pluginRegistry.ts'
 import { ItemNotFoundError, Storage, StorageError } from './storage.ts'
 import { PluginManifest } from './plugin.ts'
+import { net } from './runtimePermission.ts'
 import { assert, assertEquals } from '@std/assert'
 
 const registryTestPlugin = {
@@ -146,6 +147,119 @@ Deno.test('pluginRegistry getInstalledPlugins returns installed plugins', async 
     const plugins = yield* registry.getInstalledPlugins()
     assertEquals(plugins.length, 1)
     assertEquals(plugins[0].id, 'registry-test')
+  })
+
+  const exit = await runRegistry(effect, layer)
+  assert(Exit.isSuccess(exit))
+})
+
+Deno.test('pluginRegistry grantHostPermission persists app permission grants', async () => {
+  const { layer } = ephemeralStorage()
+
+  const effect = Effect.gen(function* () {
+    const registry = yield* PluginRegistry
+    yield* registry.installPlugin(registryTestPlugin)
+
+    const firstGrant = yield* registry.grantHostPermission(
+      registryTestPlugin.id,
+      'manage-tasks'
+    )
+    const duplicateGrant = yield* registry.grantHostPermission(
+      registryTestPlugin.id,
+      'manage-tasks'
+    )
+    const plugins = yield* registry.getInstalledPlugins()
+
+    assertEquals(firstGrant.changed, true)
+    assertEquals(duplicateGrant.changed, false)
+    assertEquals(plugins[0].grantedHostPermissions, ['manage-tasks'])
+  })
+
+  const exit = await runRegistry(effect, layer)
+  assert(Exit.isSuccess(exit))
+})
+
+Deno.test('pluginRegistry revokeHostPermission persists app permission revokes', async () => {
+  const { layer } = ephemeralStorage()
+
+  const effect = Effect.gen(function* () {
+    const registry = yield* PluginRegistry
+    yield* registry.installPlugin({
+      ...registryTestPlugin,
+      grantedHostPermissions: ['manage-tasks', 'delete-tasks']
+    })
+
+    const firstRevoke = yield* registry.revokeHostPermission(
+      registryTestPlugin.id,
+      'delete-tasks'
+    )
+    const duplicateRevoke = yield* registry.revokeHostPermission(
+      registryTestPlugin.id,
+      'delete-tasks'
+    )
+    const plugins = yield* registry.getInstalledPlugins()
+
+    assertEquals(firstRevoke.changed, true)
+    assertEquals(duplicateRevoke.changed, false)
+    assertEquals(plugins[0].grantedHostPermissions, ['manage-tasks'])
+  })
+
+  const exit = await runRegistry(effect, layer)
+  assert(Exit.isSuccess(exit))
+})
+
+Deno.test('pluginRegistry grantRuntimePermission persists Deno permission grants', async () => {
+  const { layer } = ephemeralStorage()
+  const apiPermission = net(['api.example.com'])
+
+  const effect = Effect.gen(function* () {
+    const registry = yield* PluginRegistry
+    yield* registry.installPlugin(registryTestPlugin)
+
+    const firstGrant = yield* registry.grantRuntimePermission(
+      registryTestPlugin.id,
+      apiPermission
+    )
+    const duplicateGrant = yield* registry.grantRuntimePermission(
+      registryTestPlugin.id,
+      net(['api.example.com'])
+    )
+    const plugins = yield* registry.getInstalledPlugins()
+
+    assertEquals(firstGrant.changed, true)
+    assertEquals(duplicateGrant.changed, false)
+    assertEquals(plugins[0].grantedRuntimePermissions, [apiPermission])
+  })
+
+  const exit = await runRegistry(effect, layer)
+  assert(Exit.isSuccess(exit))
+})
+
+Deno.test('pluginRegistry revokeRuntimePermission persists Deno permission revokes', async () => {
+  const { layer } = ephemeralStorage()
+  const apiPermission = net(['api.example.com'])
+  const cdnPermission = net(['cdn.example.com'])
+
+  const effect = Effect.gen(function* () {
+    const registry = yield* PluginRegistry
+    yield* registry.installPlugin({
+      ...registryTestPlugin,
+      grantedRuntimePermissions: [apiPermission, cdnPermission]
+    })
+
+    const firstRevoke = yield* registry.revokeRuntimePermission(
+      registryTestPlugin.id,
+      apiPermission
+    )
+    const duplicateRevoke = yield* registry.revokeRuntimePermission(
+      registryTestPlugin.id,
+      apiPermission
+    )
+    const plugins = yield* registry.getInstalledPlugins()
+
+    assertEquals(firstRevoke.changed, true)
+    assertEquals(duplicateRevoke.changed, false)
+    assertEquals(plugins[0].grantedRuntimePermissions, [cdnPermission])
   })
 
   const exit = await runRegistry(effect, layer)

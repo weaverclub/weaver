@@ -3,10 +3,17 @@ import type { Permission } from './permission.ts'
 import type { Hook } from './hook.ts'
 import type { StandardSchemaV1 } from '@standard-schema/spec'
 import { Schema } from 'effect'
-import { RuntimePermissionSchema } from './runtimePermission.ts'
+import {
+  type RuntimePermission,
+  RuntimePermissionSchema
+} from './runtimePermission.ts'
 
-const stringArray = Schema.Array(Schema.String)
-const runtimePermissionArray = Schema.Array(RuntimePermissionSchema)
+const stringArray: Schema.Array$<typeof Schema.String> = Schema.Array(
+  Schema.String
+)
+const runtimePermissionArray: Schema.Array$<
+  typeof RuntimePermissionSchema
+> = Schema.Array(RuntimePermissionSchema)
 
 const pluginMetadataFields: {
   readonly id: typeof Schema.String
@@ -54,7 +61,8 @@ export function plugin<
   options: Omit<Plugin<H, Hooks>, 'hooks'> & { hooks?: Hooks }
 ): Plugin<H, Hooks> {
   const defaultOptions = {
-    hooks: [] as unknown as Hooks
+    hooks: [] as unknown as Hooks,
+    requestedRuntimePermissions: [] as RuntimePermission[]
   }
 
   const mergedOptions = {
@@ -99,6 +107,13 @@ export type Plugin<
    * based on the permissions granted to the plugin.
    */
   requestedHostPermissions: Permission[]
+
+  /**
+   * The Deno runtime permissions that the plugin requests for its worker.
+   * These are serialized into plugin metadata by the build CLI and are granted
+   * explicitly by the host at install time.
+   */
+  requestedRuntimePermissions?: RuntimePermission[]
 
   /**
    * Hooks that the plugin registers to listen for specific events in the host.

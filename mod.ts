@@ -5,10 +5,16 @@ export {
   postFailure,
   preExecution
 } from './src/hook.ts'
-export { type Host, host } from './src/host.ts'
-export { $call, type RPC, rpc } from './src/rpc.ts'
-export { type Permission, permission } from './src/permission.ts'
-export { type Event, event } from './src/event.ts'
+export { host } from './src/host.ts'
+export { $call, rpc } from './src/rpc.ts'
+export {
+  hasPermissions,
+  missingPermissions,
+  permission,
+  permissionKey,
+  requirePermissions
+} from './src/permission.ts'
+export { event } from './src/event.ts'
 export { engine, ephemeralStorage } from './src/engine.ts'
 export {
   InstalledPlugin,
@@ -16,4 +22,23 @@ export {
   PluginManifest,
   PluginMetadata
 } from './src/plugin.ts'
+export { runPlugin } from './src/pluginRuntime.ts'
+export {
+  env,
+  ffi,
+  import_,
+  net,
+  read,
+  run,
+  runtimePermissionKey,
+  sys,
+  toDenoPermission,
+  write
+} from './src/runtimePermission.ts'
+export type { Event } from './src/event.ts'
+export type { RuntimePermissionUpdate } from './src/engine.ts'
+export type { Host } from './src/host.ts'
+export type { Permission } from './src/permission.ts'
 export type { InstallPlugin } from './src/plugin.ts'
+export type { RPC } from './src/rpc.ts'
+export type { RuntimePermission } from './src/runtimePermission.ts'

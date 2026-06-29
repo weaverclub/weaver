@@ -387,6 +387,26 @@ export class Supervisor extends Effect.Service<Supervisor>()(
         )
       }
 
+      function getByPluginId(pluginId: string) {
+        return Ref.get(handlesRef).pipe(
+          Effect.tap(() =>
+            Effect.logDebug('Looking up worker handle by plugin ID', {
+              pluginId
+            })
+          ),
+          Effect.map((handles) => {
+            const entry = HashMap.findFirst(
+              handles,
+              (handle) => handle.pluginManifest.id === pluginId
+            )
+
+            return Option.isSome(entry)
+              ? Option.some(entry.value[1])
+              : Option.none<WorkerHandle>()
+          })
+        )
+      }
+
       function notify(id: WorkerId, message: Message) {
         return Effect.gen(function* () {
           const handle = yield* get(id)
@@ -416,6 +436,7 @@ export class Supervisor extends Effect.Service<Supervisor>()(
         start,
         interrupt,
         get,
+        getByPluginId,
         notify
       } as const
     })

@@ -3,6 +3,7 @@ import { Effect, Fiber, PubSub, Queue, Ref } from 'effect'
 import { LoggerLayer, MinimumLogLevelLayer } from './log.ts'
 import { PluginManifest } from './plugin.ts'
 import type { WorkerMessage } from './protocol.ts'
+import { net } from './runtimePermission.ts'
 import { Supervisor, type WorkerLifecycleEvent } from './supervisor.ts'
 
 const runningPlugin = PluginManifest.make({
@@ -44,6 +45,26 @@ const runSupervisor = <A, E>(effect: Effect.Effect<A, E, any>) =>
     ) as Effect.Effect<A, E, never>
   )
 
+function withWorkerOptionsSpy<T>(
+  fn: (options: (WorkerOptions | undefined)[]) => Promise<T>
+): Promise<T> {
+  const optionsList: (WorkerOptions | undefined)[] = []
+  const OriginalWorker = globalThis.Worker
+
+  class SpyWorker extends Worker {
+    constructor(specifier: string | URL, options?: WorkerOptions) {
+      optionsList.push(options)
+      super(specifier, options)
+    }
+  }
+
+  globalThis.Worker = SpyWorker as any
+
+  return fn(optionsList).finally(() => {
+    globalThis.Worker = OriginalWorker
+  })
+}
+
 Deno.test('supervisor handles worker start', async () => {
   const effect = Effect.gen(function* () {
     const supervisor = yield* Supervisor
@@ -65,6 +86,56 @@ Deno.test('supervisor handles worker start', async () => {
   })
 
   await runSupervisor(effect)
+})
+
+Deno.test('supervisor finds worker by plugin id', async () => {
+  const effect = Effect.gen(function* () {
+    const supervisor = yield* Supervisor
+    const workerMessages = yield* PubSub.unbounded<WorkerMessage>()
+    const workerLifecycleEvents = yield* PubSub.unbounded<
+      WorkerLifecycleEvent
+    >()
+
+    const { id } = yield* supervisor.start({
+      grantedRuntimePermissions: [],
+      pluginManifest: runningPlugin,
+      workerMessages,
+      workerLifecycleEvents
+    })
+
+    const workerHandle = yield* supervisor.getByPluginId(runningPlugin.id)
+    assert(workerHandle._tag === 'Some')
+    assertEquals(workerHandle.value.id, id)
+  })
+
+  await runSupervisor(effect)
+})
+
+Deno.test('supervisor starts worker with granted Deno permissions', async () => {
+  await withWorkerOptionsSpy(async (optionsList) => {
+    const effect = Effect.gen(function* () {
+      const supervisor = yield* Supervisor
+      const workerMessages = yield* PubSub.unbounded<WorkerMessage>()
+      const workerLifecycleEvents = yield* PubSub.unbounded<
+        WorkerLifecycleEvent
+      >()
+
+      const { id } = yield* supervisor.start({
+        grantedRuntimePermissions: [net(['api.example.com'])],
+        pluginManifest: runningPlugin,
+        workerMessages,
+        workerLifecycleEvents
+      })
+
+      yield* supervisor.interrupt(id)
+    })
+
+    await runSupervisor(effect)
+
+    assertEquals((optionsList[0] as any).deno.permissions, {
+      net: ['api.example.com']
+    })
+  })
 })
 
 Deno.test('supervisor returns None for unknown worker', async () => {

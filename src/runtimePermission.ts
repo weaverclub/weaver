@@ -36,38 +36,85 @@ export const RuntimePermissionSchema: Schema.Schema<RuntimePermission> = Schema
     })
   )
 
+export function runtimePermissionKey(permission: RuntimePermission): string {
+  switch (permission.type) {
+    case 'net':
+      return stablePermissionKey(permission.type, permission.urls)
+    case 'read':
+      return stablePermissionKey(permission.type, permission.paths)
+    case 'write':
+      return stablePermissionKey(permission.type, permission.paths)
+    case 'env':
+      return stablePermissionKey(permission.type, permission.variables)
+    case 'sys':
+      return stablePermissionKey(permission.type, permission.apis)
+    case 'run':
+      return stablePermissionKey(permission.type, permission.programs)
+    case 'ffi':
+      return stablePermissionKey(permission.type, permission.paths)
+    case 'import':
+      return stablePermissionKey(permission.type, permission.hosts)
+  }
+}
+
+function stablePermissionKey(
+  type: RuntimePermission['type'],
+  values: readonly string[] | undefined
+): string {
+  return JSON.stringify({
+    type,
+    values: values ? [...values].sort() : undefined
+  })
+}
+
+function mergePermissionValues(
+  result: Record<string, string[] | true>,
+  key: string,
+  values: readonly string[] | undefined
+) {
+  if (!(key in result)) {
+    result[key] = values ? [...values] : true
+    return
+  }
+
+  if (result[key] === true || values === undefined) {
+    result[key] = true
+    return
+  }
+
+  result[key] = [...new Set([...result[key], ...values])]
+}
+
 export function toDenoPermission(
   permissions: readonly RuntimePermission[]
 ): Deno.PermissionOptionsObject {
-  const result: Record<string, string[] | undefined> = {}
+  const result: Record<string, string[] | true> = {}
 
   for (const permission of permissions) {
     switch (permission.type) {
       case 'net':
-        result.net = permission.urls ? [...permission.urls] : undefined
+        mergePermissionValues(result, permission.type, permission.urls)
         break
       case 'read':
-        result.read = permission.paths ? [...permission.paths] : undefined
+        mergePermissionValues(result, permission.type, permission.paths)
         break
       case 'write':
-        result.write = permission.paths ? [...permission.paths] : undefined
+        mergePermissionValues(result, permission.type, permission.paths)
         break
       case 'env':
-        result.env = permission.variables
-          ? [...permission.variables]
-          : undefined
+        mergePermissionValues(result, permission.type, permission.variables)
         break
       case 'sys':
-        result.sys = permission.apis ? [...permission.apis] : undefined
+        mergePermissionValues(result, permission.type, permission.apis)
         break
       case 'run':
-        result.run = permission.programs ? [...permission.programs] : undefined
+        mergePermissionValues(result, permission.type, permission.programs)
         break
       case 'ffi':
-        result.ffi = permission.paths ? [...permission.paths] : undefined
+        mergePermissionValues(result, permission.type, permission.paths)
         break
       case 'import':
-        result.import = permission.hosts ? [...permission.hosts] : undefined
+        mergePermissionValues(result, permission.type, permission.hosts)
         break
     }
   }

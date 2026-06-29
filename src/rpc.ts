@@ -3,10 +3,13 @@ import { Data, Effect } from 'effect'
 import type { Permission } from './permission.ts'
 import type { Optional } from './types.ts'
 import type {
+  EmitFn,
   PostExecutionHook,
   PostFailureHook,
-  PreExecutionHook
+  PreExecutionHook,
+  RpcHookPhase
 } from './hook.ts'
+import { getRpcHookPhase } from './hook.ts'
 import { $validate } from './validation.ts'
 
 export class InvalidInputError extends Data.TaggedError('InvalidInputError')<{
@@ -31,12 +34,18 @@ export class HandlerError extends Data.TaggedError('HandlerError')<{
   cause: unknown
 }> {}
 
+export class RpcHookError extends Data.TaggedError('RpcHookError')<{
+  phase: RpcHookPhase
+  cause: unknown
+}> {}
+
 export function $call<
   Input extends StandardSchemaV1,
   Output extends StandardSchemaV1 | void
 >(
   rpc: RPC<Input, Output>,
-  input: StandardSchemaV1.InferInput<Input>
+  input: StandardSchemaV1.InferInput<Input>,
+  options: CallOptions = {}
 ): Effect.Effect<
   ResolvedOutput<Output>,
   $callErrors
@@ -49,19 +58,49 @@ export function $call<
       })
     )
 
+    const emit = options.emit ?? (() => {})
+
+    yield* runHooks(
+      rpc.hooks,
+      'preExecution',
+      { emit, input: validatedInput }
+    )
+
     const output = yield* Effect.tryPromise({
       try: () => Promise.resolve(rpc.handler(validatedInput)),
       catch: (cause) => new HandlerError({ cause })
-    })
+    }).pipe(
+      Effect.catchAll((error) =>
+        runHooks(
+          rpc.hooks,
+          'postFailure',
+          { emit, input: validatedInput, error: error.cause }
+        ).pipe(Effect.andThen(() => Effect.fail(error)))
+      )
+    )
 
     if (rpc.output) {
-      return yield* $validate(rpc.output, output).pipe(
+      const validatedOutput = yield* $validate(rpc.output, output).pipe(
         Effect.catchTags({
           UnknownException: (cause) => new InvalidOutputUnknownError({ cause }),
           ValidationError: ({ issues }) => new InvalidOutputError({ issues })
         })
       )
+
+      yield* runHooks(
+        rpc.hooks,
+        'postExecution',
+        { emit, input: validatedInput, output: validatedOutput }
+      )
+
+      return validatedOutput
     }
+
+    yield* runHooks(
+      rpc.hooks,
+      'postExecution',
+      { emit, input: validatedInput, output: undefined }
+    )
   }) as Effect.Effect<ResolvedOutput<Output>, $callErrors>
 }
 
@@ -85,6 +124,29 @@ export function rpc<
   }
 
   return mergedOptions
+}
+
+function runHooks(
+  hooks: readonly RpcHook<any, any>[],
+  phase: RpcHookPhase,
+  ctx: unknown
+) {
+  return Effect.forEach(
+    hooks,
+    (hook) => {
+      if (getRpcHookPhase(hook) !== phase) {
+        return Effect.void
+      }
+
+      return Effect.tryPromise({
+        try: () => Promise.resolve(hook(ctx as never)),
+        catch: (cause) => new RpcHookError({ phase, cause })
+      })
+    },
+    {
+      discard: true
+    }
+  )
 }
 
 export type RPC<
@@ -149,6 +211,11 @@ type $callErrors =
   | InvalidOutputError
   | InvalidOutputUnknownError
   | HandlerError
+  | RpcHookError
+
+type CallOptions = {
+  emit?: EmitFn
+}
 
 type RpcHook<I extends StandardSchemaV1, O extends StandardSchemaV1 | void> =
   | PreExecutionHook<StandardSchemaV1.InferOutput<I>>

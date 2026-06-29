@@ -1,27 +1,13 @@
 import {
   engine,
   ephemeralStorage,
-  event,
   host,
-  permission,
+  InstalledPlugin,
   postExecution,
   rpc
 } from 'weaver'
 import { z } from 'zod'
-
-export const manageTasks = permission({
-  key: 'manage tasks',
-  description: 'Allows access to task-related features'
-})
-
-export const afterCreateTask = event({
-  key: 'afterCreateTask',
-  payload: z.object({
-    taskId: z.string(),
-    title: z.string()
-  }),
-  description: 'Emitted after a new task is created'
-})
+import { afterCreateTask, manageTasks } from './api.ts'
 
 const getTask = rpc({
   input: z.object({
@@ -83,4 +69,16 @@ const myEngine = engine({
   storage: ephemeralStorage()
 })
 
+const metadataUrl = new URL('../dist/plugin.json', import.meta.url)
+const metadata = JSON.parse(await Deno.readTextFile(metadataUrl))
+
+await myEngine.install(InstalledPlugin.make({
+  ...metadata,
+  entrypoint: new URL(metadata.entrypoint, metadataUrl).href,
+  grantedHostPermissions: ['manage tasks'],
+  grantedRuntimePermissions: []
+}))
+
 await myEngine.start()
+await myEngine.rpc.createTask({ title: 'Ship plugin builder' })
+await myEngine.stop()

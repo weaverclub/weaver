@@ -1,4 +1,4 @@
-import { Data } from 'effect'
+import { Data, Effect } from 'effect'
 
 export class PermissionsRequiredError
   extends Data.TaggedError('PermissionsRequiredError')<{
@@ -26,6 +26,48 @@ export function permission(options: Permission): Permission {
   }
 
   return mergedOptions
+}
+
+export function permissionKey(permission: Permission | string): string {
+  return typeof permission === 'string' ? permission : permission.key
+}
+
+export function missingPermissions(
+  grantedPermissionKeys: readonly string[],
+  requiredPermissions: readonly Permission[]
+): Permission[] {
+  return requiredPermissions.filter(
+    (requiredPermission) =>
+      !grantedPermissionKeys.includes(requiredPermission.key)
+  )
+}
+
+export function hasPermissions(
+  grantedPermissionKeys: readonly string[],
+  requiredPermissions: readonly Permission[]
+): boolean {
+  return missingPermissions(
+    grantedPermissionKeys,
+    requiredPermissions
+  ).length === 0
+}
+
+export function requirePermissions(
+  grantedPermissionKeys: readonly string[],
+  requiredPermissions: readonly Permission[]
+): Effect.Effect<void, PermissionsRequiredError> {
+  return Effect.gen(function* () {
+    const missing = missingPermissions(
+      grantedPermissionKeys,
+      requiredPermissions
+    )
+
+    if (missing.length > 0) {
+      return yield* new PermissionsRequiredError({
+        missingPermissions: missing
+      })
+    }
+  })
 }
 
 export type Permission = {
